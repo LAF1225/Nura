@@ -1,0 +1,31 @@
+# Tooling configuration for the Nura backend (PRD 0, section 23).
+# Dependencies are declared in requirements.txt / requirements-dev.txt.
+
+[tool.ruff]
+line-length = 90
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "F",   # pyflakes
+  "I",   # import sorting
+  "UP",  # pyupgrade
+  "B",   # bugbear
+  "SIM", # simplifications
+]
+
+[tool.mypy]
+python_version = "3.12"
+# Type checking "where practical": require annotations on our own functions and
+# catch stale ignores, without demanding perfect typing of third-party surfaces.
+disallow_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+ignore_missing_imports = true
+# TOML literal strings: regex backslashes need no escaping here.
+exclude = ['^\.venv/', '^alembic/versions/']
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

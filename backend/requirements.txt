@@ -1,0 +1,9 @@
+# Nura backend -- runtime dependencies.
+# Pinned to the versions this project was built and verified against.
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+SQLAlchemy==2.0.52
+psycopg[binary]==3.3.5
+alembic==1.20.0
+pydantic-settings==2.15.0
