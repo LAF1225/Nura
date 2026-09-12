@@ -1,15 +1,20 @@
 /**
- * Authentication types (PRD 0, section 5).
+ * Authentication types (PRD 0 section 5; PRD 1 section 9).
  *
- * The full sign-in experience lands in PRD 1. PRD 0 only fixes the shape of a
- * session and the set of providers, so the rest of the app can be written
- * against a stable contract.
+ * Access and refresh tokens are deliberately absent: they are held by the
+ * Supabase client in secure storage and never copied into app state.
  */
 export type AuthProviderId = 'apple' | 'google' | 'phone' | 'email';
 
+/** The states authentication can be in (PRD 1, section 9). */
+export type AuthStatus =
+  /** Still restoring a stored session on launch. */
+  'unknown' | 'unauthenticated' | 'authenticating' | 'authenticated' | 'error';
+
 export interface AuthSession {
   userId: string;
-  provider: AuthProviderId;
-  /** ISO timestamp. Access tokens themselves live in secure storage only. */
-  expiresAt: string;
+  /** Null when the provider did not tell us, e.g. a restored session. */
+  provider: AuthProviderId | null;
+  email: string | null;
+  phone: string | null;
 }

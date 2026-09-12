@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports, so they must use require() */
 /**
  * Navigation renders (PRD 0, section 22), and tapping each of Today, Health,
  * Care, Nura and More shows the correct screen with no broken routes
@@ -12,7 +13,27 @@
  */
 import { fireEvent, renderRouter, screen, waitFor } from 'expo-router/testing-library';
 
+import { mockBackend, signInAt } from './helpers';
+
+// Stands in for a configured Supabase project so the auth gate can let us in.
+jest.mock('../src/services/auth/supabaseClient', () =>
+  require('./supabaseMock').createSupabaseMock()
+);
+
 jest.setTimeout(60_000);
+
+let backend: ReturnType<typeof mockBackend>;
+
+beforeEach(() => {
+  // The auth gate only lets a signed-in, fully onboarded user reach the main
+  // tabs; without this every render would redirect to the welcome screen.
+  signInAt('ready_for_pairing');
+  backend = mockBackend({ status: 'ready_for_pairing' });
+});
+
+afterEach(() => {
+  backend.restore();
+});
 
 /** Tab label -> the route it should open and copy unique to that screen. */
 const TAB_ROUTES: { label: string; path: string; content: RegExp }[] = [

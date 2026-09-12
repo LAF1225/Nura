@@ -31,20 +31,37 @@ lives. The backend is the only component trusted with authorisation.
 
 ## What exists today
 
-| Area           | State                                                       |
-| -------------- | ----------------------------------------------------------- |
-| Navigation     | Five tabs: Today, Health, Care, Nura, More                  |
-| Theming        | Light, Dark and System; persisted locally                   |
-| Networking     | Central API client with typed errors                        |
-| Server state   | TanStack Query                                              |
-| Global state   | Zustand, with theme and device selection persisted          |
-| Authentication | Method surface only; no provider configured (see PRD 1)     |
-| Database       | `users`, `user_settings`, `devices`, created by a migration |
-| Endpoints      | `GET /health`, `GET /api/v1/version`                        |
+| Area           | State                                                                          |
+| -------------- | ------------------------------------------------------------------------------ |
+| Navigation     | Five tabs, plus a separate onboarding stack shown until setup is finished      |
+| Theming        | Light, Dark and System; persisted locally                                      |
+| Networking     | Central API client with typed errors; attaches the bearer token automatically  |
+| Server state   | TanStack Query                                                                 |
+| Global state   | Zustand — theme, device selection and last onboarding step persisted           |
+| Authentication | Supabase Auth. Email verified end to end; Google, Apple and phone implemented but unverified |
+| Onboarding     | Welcome → auth → setup mode → profile → preferences → consent → ready to pair  |
+| Database       | `users`, `user_settings`, `profiles`, `account_profile_roles`, `devices`       |
+| Endpoints      | `/health`, `/api/v1/version`, `/api/v1/me`, `/api/v1/onboarding`, `/api/v1/profiles` |
 
 Deliberately absent: symptom and medication tracking, appointments, AI or
-chat, caregiver features, emergency detection, push notifications, HealthKit,
-Health Connect, and robot pairing.
+chat, caregiver permissions, emergency detection, push notifications,
+HealthKit, Health Connect, and robot pairing.
+
+### Account holder vs. the person Nura is for
+
+The `users` table is really the **account** — the identity that signs in. The
+person Nura is set up for lives in `profiles`. In assisted setup those are
+different people, so keeping them apart means assisted setup needs no
+special-casing, and the caregiver model in a later PRD has somewhere to attach.
+
+`account_profile_roles` joins them, with exactly two roles for now: `self` (the
+account holder is the person Nura is for) and `setup_helper` (they are setting
+it up for someone else). There are no permission columns yet — caregiver
+permissions, invitations and emergency roles are later PRDs.
+
+Onboarding progress lives in one column, `users.onboarding_status`. The step
+number shown in the UI is derived from it rather than stored separately, so the
+two can never disagree about where to resume.
 
 ## Mobile architecture
 
@@ -146,26 +163,47 @@ older app builds keep working. `GET /api/v1/version` returns
 ### Data model
 
 ```text
-users
-  id                uuid, primary key    ← the identity everything references
-  auth_provider_id  unique, indexed      ← subject from the auth provider
-  email             unique, nullable     ┐ sign-up can be by phone
-  phone             unique, nullable     ┘ or by email
+users  (the account: who signs in)
+  id                 uuid, primary key   ← the identity everything references
+  auth_provider_id   unique, indexed     ← `sub` from the auth provider
+  email              unique, nullable    ┐ sign-up can be by phone
+  phone              unique, nullable    ┘ or by email
+  setup_mode         self | assisted     ← null until chosen
+  onboarding_status  state machine       ← single source of truth for progress
+  terms_accepted_at        nullable      ┐ separate, and timestamps rather than
+  privacy_acknowledged_at  nullable      ┘ booleans, so there is a record of when
   created_at, updated_at
 
-user_settings                  devices
-  id          uuid, pk           id                uuid, pk
-  user_id     unique → users     owner_user_id     → users (cascade)
-  theme       system|light|dark  device_identifier unique, indexed
-  language                       display_name
-  created_at, updated_at         device_type
-                                 firmware_version
-                                 last_seen_at
-                                 created_at, updated_at
+profiles  (the person Nura is for)        account_profile_roles
+  id              uuid, pk                  id          uuid, pk
+  preferred_name  required                  account_id  → users (cascade)
+  age_range       band, not a birth date    profile_id  → profiles (cascade)
+  country_region  ISO 3166-1 alpha-2        role        self | setup_helper
+  pronouns        optional                  unique (account_id, profile_id)
+  avatar_url      reserved; no upload UI
+  created_at, updated_at
+
+user_settings                         devices
+  id          uuid, pk                  id                uuid, pk
+  user_id     unique → users            owner_user_id     → users (cascade)
+  theme       system|light|dark         device_identifier unique, indexed
+  language                              display_name
+  larger_text                           device_type
+  high_contrast                         firmware_version
+  reduce_motion                         last_seen_at
+  voice_first_preference                created_at, updated_at
+  simplified_interface
+  created_at, updated_at
 ```
 
-`theme` is constrained at the database level, not only in application code.
-Both child tables cascade on user deletion.
+Value sets (`theme`, `setup_mode`, `onboarding_status`, `age_range`, `role`) are
+enforced by database CHECK constraints, not only in application code, and are
+generated from the same tuples the API schemas validate against — so the two
+cannot drift. Every child table cascades on account deletion.
+
+An age *band* is stored rather than a date of birth: it is enough for
+age-appropriate behaviour without holding a precise identifier. `profiles`
+contains no medical information of any kind, and a test asserts that.
 
 ## Security posture
 

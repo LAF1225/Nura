@@ -6,6 +6,14 @@ migrations.
 """
 
 from app.models.device import DEVICE_TYPE_XIAO_ESP32S3, Device
+from app.models.profile import AccountProfileRole, Profile
 from app.models.user import User, UserSettings
 
-__all__ = ["DEVICE_TYPE_XIAO_ESP32S3", "Device", "User", "UserSettings"]
+__all__ = [
+    "DEVICE_TYPE_XIAO_ESP32S3",
+    "AccountProfileRole",
+    "Device",
+    "Profile",
+    "User",
+    "UserSettings",
+]

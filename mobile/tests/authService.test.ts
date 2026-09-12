@@ -1,80 +1,85 @@
 /**
- * Authentication surface (PRD 0, section 5).
+ * Authentication service behaviour (PRD 1, sections 9, 10 and 52).
  *
- * PRD 0 must not contain a fake sign-in flow. These tests pin that down: with
- * no provider configured, every sign-in method *rejects*, and nothing ever
- * hands back a session it did not genuinely obtain.
- *
- * No screen imports this module yet, so without these tests it would only be
- * checked by the type checker. PRD 1 replaces the bodies; these assertions
- * should then be updated deliberately, not quietly deleted.
+ * The test environment has no Supabase credentials, which is exactly the
+ * "provider not configured" case the PRD cares about: every entry point must
+ * reject with a clear error and none may ever resolve with a session.
  */
-import {
-  AuthProviderNotConfiguredError,
-  AuthService,
-  configuredProviders,
-  isProviderConfigured,
-} from '../src/services/auth/authService';
-import { useAppStore } from '../src/store/appStore';
-import type { AuthProviderId } from '../src/types/auth';
+import { AuthError, toAuthError } from '../src/services/auth/authErrors';
+import { AuthService, availableProviders } from '../src/services/auth/authService';
 
-const PROVIDERS: AuthProviderId[] = ['apple', 'google', 'phone', 'email'];
-
-describe('provider configuration', () => {
-  it('reports no configured providers in PRD 0', () => {
-    expect(configuredProviders()).toEqual([]);
-    for (const provider of PROVIDERS) {
-      expect(isProviderConfigured(provider)).toBe(false);
-    }
-  });
-});
-
-describe('sign-in methods', () => {
-  const methods: [AuthProviderId, () => Promise<unknown>][] = [
-    ['apple', AuthService.signInWithApple],
-    ['google', AuthService.signInWithGoogle],
-    ['phone', AuthService.signInWithPhone],
-    ['email', AuthService.signInWithEmail],
-  ];
-
-  it.each(methods)(
-    'rejects %s rather than faking a session',
-    async (provider, method) => {
-      await expect(method()).rejects.toBeInstanceOf(AuthProviderNotConfiguredError);
-      // The error names the provider and says why, so the UI can be explicit
-      // about the development state instead of showing a generic failure.
-      await expect(method()).rejects.toThrow(new RegExp(provider));
-      await expect(method()).rejects.toThrow(/not configured yet/);
-
-      // Critically: no session was created as a side effect.
-      expect(useAppStore.getState().session).toBeNull();
-      expect(AuthService.getCurrentSession()).toBeNull();
-    }
-  );
-});
-
-describe('session handling', () => {
-  afterEach(() => {
-    useAppStore.setState({ session: null });
+describe('when no auth provider is configured', () => {
+  it('reports that it is not configured', () => {
+    expect(AuthService.isConfigured()).toBe(false);
+    expect(availableProviders()).toEqual([]);
   });
 
-  it('reports no current session when signed out', () => {
-    useAppStore.setState({ session: null });
-    expect(AuthService.getCurrentSession()).toBeNull();
-  });
-
-  it('returns null from refreshSession instead of inventing one', async () => {
-    useAppStore.setState({ session: null });
+  it('has no session to return rather than inventing one', async () => {
+    await expect(AuthService.getCurrentSession()).resolves.toBeNull();
     await expect(AuthService.refreshSession()).resolves.toBeNull();
   });
 
-  it('clears local session state on sign-out', async () => {
-    useAppStore.setState({
-      session: { userId: 'u1', provider: 'email', expiresAt: '2030-01-01T00:00:00Z' },
+  it.each([
+    ['signInWithEmail', () => AuthService.signInWithEmail('a@b.com', 'password123')],
+    ['signUpWithEmail', () => AuthService.signUpWithEmail('a@b.com', 'password123')],
+    ['sendPasswordReset', () => AuthService.sendPasswordReset('a@b.com')],
+    ['sendPhoneOtp', () => AuthService.sendPhoneOtp('+447700900123')],
+    ['verifyPhoneOtp', () => AuthService.verifyPhoneOtp('+447700900123', '123456')],
+    ['signInWithGoogle', () => AuthService.signInWithGoogle()],
+    ['signOut', () => AuthService.signOut()],
+  ])('%s rejects instead of simulating success', async (_name, call) => {
+    await expect(call()).rejects.toMatchObject({
+      name: 'AuthError',
+      kind: 'notConfigured',
     });
+  });
 
-    await AuthService.signOut();
+  it('explains itself in words a user can read', () => {
+    const error = new AuthError('notConfigured');
+    expect(error.message).toMatch(/not available in this build/i);
+  });
+});
 
-    expect(useAppStore.getState().session).toBeNull();
+describe('provider error mapping', () => {
+  it('never surfaces the provider’s own wording', () => {
+    const raw = { code: 'invalid_credentials', message: 'Invalid login credentials' };
+
+    const mapped = toAuthError(raw);
+
+    expect(mapped.kind).toBe('invalidCredentials');
+    expect(mapped.message).not.toContain('Invalid login credentials');
+  });
+
+  it('does not reveal whether an account exists', () => {
+    const mapped = toAuthError({ code: 'invalid_credentials' });
+    // Must not distinguish "no such user" from "wrong password".
+    expect(mapped.message).not.toMatch(/no account|not found|unregistered/i);
+  });
+
+  it.each([
+    ['email_exists', 'emailAlreadyRegistered'],
+    ['weak_password', 'weakPassword'],
+    ['otp_expired', 'expiredCode'],
+    ['over_sms_send_rate_limit', 'rateLimited'],
+    ['email_not_confirmed', 'emailNotConfirmed'],
+    ['refresh_token_not_found', 'sessionExpired'],
+  ])('maps %s to %s', (code, expected) => {
+    expect(toAuthError({ code }).kind).toBe(expected);
+  });
+
+  it('falls back to the HTTP status when there is no code', () => {
+    expect(toAuthError({ status: 429 }).kind).toBe('rateLimited');
+    expect(toAuthError({ status: 401 }).kind).toBe('invalidCredentials');
+  });
+
+  it('treats an unrecognised failure as unknown rather than guessing', () => {
+    const mapped = toAuthError(new Error('something odd happened'));
+    expect(mapped.kind).toBe('unknown');
+    expect(mapped.message).not.toContain('something odd happened');
+  });
+
+  it('passes an AuthError straight through', () => {
+    const original = new AuthError('cancelled');
+    expect(toAuthError(original)).toBe(original);
   });
 });

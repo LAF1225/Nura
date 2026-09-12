@@ -91,14 +91,65 @@ Both values come from `backend/app/core/config.py`.
 
 ---
 
+## Authentication
+
+Every route below `/api/v1` except `version` requires a bearer token:
+
+```text
+Authorization: Bearer <supabase access token>
+```
+
+The backend verifies the signature against the Supabase project's public JWKS
+endpoint, checks the issuer, audience and expiry, then maps the token's `sub`
+claim to a local `users` row — creating it on first sight. A client-supplied
+identifier never establishes identity.
+
+| Response | Meaning                                                              |
+| -------- | -------------------------------------------------------------------- |
+| `401`    | Missing, malformed, expired, forged or wrong-issuer token. The body never says which. |
+| `503`    | No auth provider configured on the server (`SUPABASE_URL` unset). A deployment problem, not a credential problem. |
+
+### `GET /api/v1/me`
+
+The signed-in account: contact details, settings, and the profiles it is linked
+to. There is deliberately no `/users/{id}` — nothing takes an identifier from
+the client.
+
+### `PATCH /api/v1/me`
+
+Updates account preferences only: `theme`, `language`, and the accessibility
+flags (`larger_text`, `high_contrast`, `reduce_motion`,
+`voice_first_preference`, `simplified_interface`). Fields left out are
+unchanged. Onboarding progress and profile details are not touched here.
+
+### `GET /api/v1/onboarding` · `PATCH /api/v1/onboarding`
+
+Progress through the onboarding state machine, plus the derived `step` /
+`total_steps` for the progress indicator. The PATCH body may carry
+`setup_mode`, `accept_terms`, `acknowledge_privacy` and a requested `status`.
+
+The server is authoritative about progression:
+
+- requirements are cumulative, so a client cannot jump to `ready_for_pairing`
+  and skip the consent gate;
+- both acknowledgements are required, separately, before `consent_complete`;
+- progress never moves backwards, so revisiting an earlier screen does not
+  reset it;
+- a status whose requirements are unmet returns `409` with a message that is
+  safe to show the user.
+
+### `POST /api/v1/profiles` · `GET|PATCH /api/v1/profiles/{profile_id}`
+
+The people Nura is set up for. A profile is reachable only through a join row
+belonging to the signed-in account; a profile id that exists but belongs to
+someone else returns **`404`, not `403`**, so the endpoint does not confirm the
+id exists. An account may hold one `self` profile plus any number of
+`setup_helper` ones.
+
 ## Not implemented yet
 
-No endpoint reads or writes `users`, `user_settings` or `devices`. The tables
-and models exist; the routes arrive with the PRDs that need them.
-
-Authentication is not wired up. There is no `Authorization` header handling,
-and no endpoint requires a session. PRD 1 adds sign-in, at which point the API
-client gains the header and this document gains an auth section.
+No endpoint reads or writes `devices`. The table and model exist; pairing
+routes arrive with PRD 2.
 
 ## Rules for every future endpoint
 

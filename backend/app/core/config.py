@@ -56,9 +56,44 @@ class Settings(BaseSettings):
     #: this exists so `npm run web` can reach the backend during development.
     cors_origins: list[str] = []
 
+    #: Supabase project URL, e.g. ``https://abcdefgh.supabase.co``. Not a
+    #: secret. Everything the backend needs to verify tokens is derived from
+    #: it. Leave unset and protected routes report that auth is not configured
+    #: rather than letting anything through.
+    supabase_url: str | None = None
+
+    #: Only for projects still signing with the legacy HS256 shared secret.
+    #: Leave unset for asymmetric (JWKS) projects, which is the default for new
+    #: Supabase projects and the path that requires no shared secret at all.
+    supabase_jwt_secret: str | None = None
+
     @property
     def is_development(self) -> bool:
         return self.app_env == "development"
+
+    @property
+    def supabase_base_url(self) -> str | None:
+        """Project URL with any trailing slash removed."""
+        if not self.supabase_url:
+            return None
+        return self.supabase_url.rstrip("/")
+
+    @property
+    def supabase_issuer(self) -> str | None:
+        """The ``iss`` claim Supabase puts in its access tokens."""
+        base = self.supabase_base_url
+        return f"{base}/auth/v1" if base else None
+
+    @property
+    def supabase_jwks_url(self) -> str | None:
+        """Where the project publishes its public signing keys."""
+        base = self.supabase_base_url
+        return f"{base}/auth/v1/.well-known/jwks.json" if base else None
+
+    @property
+    def auth_configured(self) -> bool:
+        """Whether this backend can verify a token at all."""
+        return bool(self.supabase_url)
 
 
 @lru_cache

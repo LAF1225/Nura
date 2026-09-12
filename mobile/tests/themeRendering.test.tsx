@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports, so they must use require() */
 /**
  * Theme applied end to end (PRD 0, sections 22 and 27).
  *
@@ -9,10 +10,30 @@
  */
 import { renderRouter, screen, waitFor } from 'expo-router/testing-library';
 
+import { mockBackend, signInAt } from './helpers';
+
 import { useAppStore } from '../src/store/appStore';
 import { darkTheme, lightTheme } from '../src/theme/themes';
 
+// Stands in for a configured Supabase project so the auth gate can let us in.
+jest.mock('../src/services/auth/supabaseClient', () =>
+  require('./supabaseMock').createSupabaseMock()
+);
+
 jest.setTimeout(60_000);
+
+let backend: ReturnType<typeof mockBackend>;
+
+beforeEach(() => {
+  // The auth gate only lets a signed-in, fully onboarded user reach the main
+  // tabs; without this every render would redirect to the welcome screen.
+  signInAt('ready_for_pairing');
+  backend = mockBackend({ status: 'ready_for_pairing' });
+});
+
+afterEach(() => {
+  backend.restore();
+});
 
 /** Flattens a React Native style prop into one object. */
 function flattenStyle(style: unknown): Record<string, unknown> {

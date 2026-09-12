@@ -25,6 +25,19 @@ target_metadata = Base.metadata
 
 
 def _database_url() -> str:
+    """The database to migrate.
+
+    Normally this comes from application settings, so there is exactly one
+    place that knows how to reach the database and no credentials sit in a
+    tracked file -- ``alembic.ini`` ships with an empty ``sqlalchemy.url``.
+
+    A caller that sets the option programmatically (the test suite points it at
+    ``nura_test``) wins, which is what makes the migrations runnable against a
+    database other than the configured one.
+    """
+    configured = config.get_main_option("sqlalchemy.url", None)
+    if configured:
+        return configured
     return get_settings().database_url
 
 

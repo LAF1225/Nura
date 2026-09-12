@@ -97,6 +97,58 @@ a different backend.
 Never put a secret in an `EXPO_PUBLIC_*` variable — Expo inlines them into the
 app bundle, where anyone can read them.
 
+## 2b. Authentication setup (Supabase)
+
+Sign-in needs a real provider. Without one the app still runs, but the sign-in
+screen says plainly that authentication is not configured and every provider
+button is disabled — it never pretends a login succeeded.
+
+1. Create a project at [supabase.com](https://supabase.com). The free tier is
+   enough for email sign-in.
+2. **Project Settings → API** — copy the **Project URL** and the **anon /
+   public** key.
+3. **Authentication → Providers → Email** — make sure it is enabled. For local
+   testing, turn **Confirm email off**, otherwise sign-up waits on an inbox
+   round trip.
+4. Put the values in both env files:
+
+```text
+# mobile/.env
+EXPO_PUBLIC_SUPABASE_URL=https://<project>.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=<anon key>
+
+# backend/.env
+SUPABASE_URL=https://<project>.supabase.co
+```
+
+5. Restart Metro with `npx expo start --clear` — `EXPO_PUBLIC_*` values are
+   baked in at bundle time, so a running server will not pick them up.
+
+The anon key is designed to be public and is safe in the app bundle; it grants
+nothing on its own. The backend needs only the project **URL**: it verifies
+tokens against the project's public JWKS endpoint, so no shared secret is
+involved. `SUPABASE_JWT_SECRET` exists for older projects that still sign with
+HS256 — leave it blank otherwise.
+
+### The other providers
+
+| Provider   | What it additionally needs                                             |
+| ---------- | ---------------------------------------------------------------------- |
+| **Email**  | Nothing beyond the steps above.                                        |
+| **Google** | An OAuth client in Google Cloud, the secret added to Supabase → Providers → Google, and the client id in `EXPO_PUBLIC_GOOGLE_CLIENT_ID`. |
+| **Apple**  | An Apple Developer account ($99/yr), a Services ID and key configured in Supabase → Providers → Apple. Native Sign in with Apple is iOS-only, so it needs a Mac or an iOS device to exercise. |
+| **Phone**  | An SMS provider (Twilio, MessageBird, Vonage) configured in Supabase → Providers → Phone. Sending real messages costs money. |
+
+Add this redirect URL under **Authentication → URL Configuration** so the OAuth
+providers can return to the app:
+
+```text
+nura://auth/callback
+```
+
+In Expo Go the redirect is an `exp://…` URL instead, which Supabase must also
+allow; the exact address is printed when Metro starts.
+
 ## 3. Run the backend
 
 ```bash
@@ -208,7 +260,15 @@ cd backend
 pytest
 ```
 
-Neither suite needs a running backend or database.
+The mobile suite needs nothing running.
+
+The backend suite **does need PostgreSQL running**. It creates a separate
+`nura_test` database on first run, applies the real migrations to it, and rolls
+each test back afterwards — so the tests also prove the migrations produce a
+schema the code works against. Your `nura_dev` data is never touched. Neither
+suite needs a Supabase project or a network connection: tokens are signed with
+a key pair generated inside the test run and verified by the real production
+verifier.
 
 ## 6. Code quality
 
@@ -283,7 +343,32 @@ string from the Supabase dashboard into `backend/.env` and run
 - Decision records:
   [React Native + Expo](docs/decisions/0001-react-native-expo.md),
   [FastAPI + PostgreSQL](docs/decisions/0002-fastapi-postgresql.md),
-  [Device connectivity](docs/decisions/0003-device-connectivity.md)
+  [Device connectivity](docs/decisions/0003-device-connectivity.md),
+  [Supabase Auth](docs/decisions/0004-supabase-auth.md)
+
+## Known issues
+
+**Onboarding interactions are not covered by mobile tests.** Under this Jest
+setup (React 19 + React Native Testing Library 14 + expo-router), a screen's
+local `useState` does not re-render: the press handler runs, but the component
+never updates, and React reports "overlapping act() calls". Anything that
+writes to the Zustand store or the network is testable and is tested; anything
+that only changes local component state — selecting a card, then pressing
+Continue — is not. The rules those steps enforce (the consent gate, profile
+validation, progression order, per-user access control) are covered against a
+real database in `backend/tests/`, so the behaviour is verified, just not
+through the UI. Tried without success: mocking `react-native-screens` freeze,
+setting `IS_REACT_ACT_ENVIRONMENT`, draining timers inside `act`, and
+navigating directly instead of through the gate.
+
+**Only email sign-in has been verified end to end.** Google, Apple and phone
+are implemented against the Supabase SDK and documented above, but marked
+unverified: Apple needs macOS or an iOS device plus a paid developer account,
+and phone needs a paid SMS provider. None of them simulate success — an
+unconfigured provider is reported as unavailable.
+
+**The app has not been run on a physical device or emulator.** The bundle
+compiles and the suites pass, but no run on real hardware has happened yet.
 
 ## Troubleshooting
 

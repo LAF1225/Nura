@@ -83,7 +83,12 @@ describe('theme preference persistence', () => {
   it('persists only preferences -- never the auth session', async () => {
     // Tokens belong in secure storage, not AsyncStorage (PRD 0, section 18).
     useAppStore.setState({
-      session: { userId: 'u1', provider: 'email', expiresAt: '2030-01-01T00:00:00Z' },
+      session: {
+        userId: 'u1',
+        provider: 'email',
+        email: 'person@example.test',
+        phone: null,
+      },
     });
     useAppStore.getState().setThemePreference('light');
     await flushWrites();
@@ -92,6 +97,7 @@ describe('theme preference persistence', () => {
     const persisted = JSON.parse(stored as string).state;
 
     expect(Object.keys(persisted).sort()).toEqual([
+      'lastOnboardingStatus',
       'selectedDeviceId',
       'themePreference',
     ]);

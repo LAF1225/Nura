@@ -2,13 +2,13 @@
  * Root layout: the providers every screen depends on, in the order they depend
  * on each other.
  *
- *   SafeAreaProvider   -- inset measurements
+ *   SafeAreaProvider    -- inset measurements
  *   QueryClientProvider -- server state (PRD 0, section 14)
- *   ThemeProvider      -- Light / Dark / System (PRD 0, section 11)
+ *   ThemeProvider       -- Light / Dark / System (PRD 0, section 11)
  *
- * The splash screen is held until the persisted theme preference has been read
- * back from disk, so the app never paints the wrong theme and then snaps to the
- * stored one.
+ * The splash screen is held until the persisted preferences have been read and
+ * authentication has settled, so the app never paints the wrong theme or
+ * flashes the welcome screen at someone who is already signed in.
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
@@ -17,6 +17,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { useAuthGate } from '../src/hooks/useAuthGate';
+import { useAuthBootstrap } from '../src/services/auth/useAuthBootstrap';
 import { useAppStore } from '../src/store/appStore';
 import { ThemeProvider, useTheme } from '../src/theme';
 
@@ -39,14 +41,22 @@ const queryClient = new QueryClient({
 function AppShell() {
   const theme = useTheme();
   const hasHydrated = useAppStore((state) => state.hasHydrated);
+  const authStatus = useAppStore((state) => state.authStatus);
+
+  // Restores any stored session and keeps the API client supplied with a token.
+  useAuthBootstrap();
+  // Routes to welcome / the right onboarding step / the main app.
+  useAuthGate();
+
+  const ready = hasHydrated && authStatus !== 'unknown';
 
   useEffect(() => {
-    if (hasHydrated) {
+    if (ready) {
       void SplashScreen.hideAsync();
     }
-  }, [hasHydrated]);
+  }, [ready]);
 
-  if (!hasHydrated) {
+  if (!ready) {
     // Native splash is still covering the screen at this point.
     return null;
   }
@@ -65,7 +75,9 @@ function AppShell() {
         }}
       >
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
         <Stack.Screen name="appearance" options={{ title: 'Appearance' }} />
+        <Stack.Screen name="connect-device" options={{ title: '' }} />
       </Stack>
     </>
   );

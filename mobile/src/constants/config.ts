@@ -59,10 +59,33 @@ function resolveApiBaseUrl(): string {
   return '';
 }
 
+function readPublicEnv(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+/**
+ * Supabase project settings (PRD 1, section 9).
+ *
+ * Both are public by design -- the anon key grants nothing on its own. When
+ * they are absent the app says authentication is not configured rather than
+ * simulating a sign-in, which PRD 1 section 52 requires.
+ */
+const supabaseUrl = readPublicEnv(process.env.EXPO_PUBLIC_SUPABASE_URL);
+const supabaseAnonKey = readPublicEnv(process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
+
 export const config = {
   apiBaseUrl: resolveApiBaseUrl(),
   apiTimeoutMs: API_TIMEOUT_MS,
   /** App version from app.json, shown on the More tab. */
   appVersion: Constants.expoConfig?.version ?? '0.0.0',
   isDev: __DEV__,
+
+  supabaseUrl,
+  supabaseAnonKey,
+  /** True only when the app can genuinely reach an auth provider. */
+  isSupabaseConfigured: Boolean(supabaseUrl && supabaseAnonKey),
+
+  /** OAuth web client id. Null disables the Google button with a clear reason. */
+  googleClientId: readPublicEnv(process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID),
 } as const;

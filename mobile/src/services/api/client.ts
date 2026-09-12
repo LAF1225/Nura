@@ -12,6 +12,23 @@ import { ApiError, kindForStatus } from './errors';
 
 const log = createLogger('api');
 
+/** Supplies the bearer token for outgoing requests, or null when signed out. */
+type TokenProvider = () => Promise<string | null>;
+
+let getAccessToken: TokenProvider = async () => null;
+
+/**
+ * Registers where the access token comes from.
+ *
+ * Injected rather than imported so this module stays independent of the auth
+ * provider: the client can be exercised in tests without pulling in Supabase,
+ * and swapping auth backends later touches one call site. The app registers
+ * its provider once, at startup.
+ */
+export function setAuthTokenProvider(provider: TokenProvider): void {
+  getAccessToken = provider;
+}
+
 export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   /** Serialised as JSON. Omit for GET. */
@@ -63,6 +80,10 @@ export async function apiRequest<T>(
   const abortFromCaller = () => controller.abort();
   signal?.addEventListener('abort', abortFromCaller);
 
+  // Attached whenever the user is signed in. Public routes ignore it, so
+  // there is no need for call sites to say which routes are protected.
+  const token = await getAccessToken();
+
   let response: Response;
   try {
     response = await fetch(url, {
@@ -70,6 +91,7 @@ export async function apiRequest<T>(
       headers: {
         Accept: 'application/json',
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal,
