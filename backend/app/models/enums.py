@@ -15,8 +15,10 @@ SETUP_MODES = ("self", "assisted")
 #: Onboarding state machine (PRD 1, section 31). Order matters: it defines
 #: both progression and where a partially-onboarded user resumes.
 #:
-#: PRD 1 ends at ``ready_for_pairing``; ``onboarding_complete`` is reached in
-#: PRD 2 once the user has paired a device or explicitly chosen to skip.
+#: PRD 1 ends at ``ready_for_pairing``. PRD 2 adds ``robot_connected``, reached
+#: once a robot the account owns has been claimed and seen online. It is not
+#: ``onboarding_complete``: detailed setup in later PRDs still follows
+#: (PRD 2, section 41).
 ONBOARDING_STATUSES = (
     "not_started",
     "authenticated",
@@ -25,11 +27,21 @@ ONBOARDING_STATUSES = (
     "preferences_complete",
     "consent_complete",
     "ready_for_pairing",
+    "robot_connected",
     "onboarding_complete",
 )
 
 #: The last status PRD 1 is responsible for reaching.
 ONBOARDING_FINAL_STATUS_PRD1 = "ready_for_pairing"
+
+#: Whether a robot is linked to an account (PRD 2, section 31). The PRD's
+#: "claim pending" stage is an unconsumed provisioning session rather than a
+#: device row, so a device row only exists once a robot has actually reached
+#: the backend. ``unclaimed`` is reserved for a future ownership release.
+DEVICE_PROVISIONING_STATUSES = ("unclaimed", "claimed")
+
+#: Derived from heartbeats on every read, never stored (PRD 2, section 34).
+DEVICE_CONNECTION_STATUSES = ("unknown", "online", "offline")
 
 #: How an account relates to a profile (PRD 1, section 34). Deliberately just
 #: these two -- caregiver permission categories belong to a later PRD.

@@ -29,7 +29,8 @@ from app.core.security import (
     TokenVerifier,
 )
 from app.db.session import get_db
-from app.models import User, UserSettings
+from app.models import Device, User, UserSettings
+from app.services.devices import hash_secret
 
 logger = logging.getLogger(__name__)
 
@@ -155,5 +156,30 @@ def get_current_user(
     return _provision_account(db, claims)
 
 
+def get_current_device(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Device:
+    """Resolves the robot calling a device endpoint, or raises 401 (PRD 2, section 55).
+
+    Robots authenticate with the device token issued at claim, never with a
+    user's login token. The two can't be confused: a user JWT has no matching
+    token hash here, and a device token fails signature verification on user
+    routes.
+    """
+    if credentials is None or not credentials.credentials:
+        raise UNAUTHORIZED
+
+    device = (
+        db.query(Device)
+        .filter(Device.device_token_hash == hash_secret(credentials.credentials))
+        .one_or_none()
+    )
+    if device is None or device.claimed_by_account_id is None:
+        raise UNAUTHORIZED
+    return device
+
+
 CurrentUser = Annotated[User, Depends(get_current_user)]
+CurrentDevice = Annotated[Device, Depends(get_current_device)]
 DbSession = Annotated[Session, Depends(get_db)]

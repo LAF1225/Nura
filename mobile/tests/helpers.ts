@@ -45,6 +45,8 @@ interface BackendState {
   termsAccepted?: boolean;
   privacyAcknowledged?: boolean;
   preferredName?: string;
+  /** Raw `/api/v1/devices` response items, in wire format. */
+  devices?: Record<string, unknown>[];
 }
 
 /** Records what the stubbed backend was asked to do, for assertions. */
@@ -62,6 +64,7 @@ const STEP_FOR_STATUS: Record<OnboardingStatus, number> = {
   preferences_complete: 4,
   consent_complete: 5,
   ready_for_pairing: 5,
+  robot_connected: 5,
   onboarding_complete: 5,
 };
 
@@ -83,6 +86,7 @@ export function mockBackend(initial: BackendState = {}): BackendStub {
       termsAccepted: initial.termsAccepted ?? false,
       privacyAcknowledged: initial.privacyAcknowledged ?? false,
       preferredName: initial.preferredName ?? 'Ada',
+      devices: initial.devices ?? [],
     },
     restore: () => {
       globalThis.fetch = originalFetch;
@@ -152,6 +156,10 @@ export function mockBackend(initial: BackendState = {}): BackendStub {
 
     if (path.startsWith('/api/v1/me')) {
       return jsonResponse(accountBody());
+    }
+
+    if (path === '/api/v1/devices') {
+      return jsonResponse(stub.state.devices);
     }
 
     return jsonResponse({ status: 'ok', service: 'nura-api' });

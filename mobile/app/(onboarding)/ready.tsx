@@ -1,9 +1,10 @@
 /**
  * Ready-to-pair handoff (PRD 1, section 46).
  *
- * The end of PRD 1. Pairing itself is PRD 2, so "Connect Nura" leads to a
- * screen that says plainly it is not built yet. Nothing here implies a robot
- * is connected (PRD 1, section 47).
+ * The end of PRD 1 and the entry to PRD 2's pairing flow. "Set up later"
+ * leaves pairing for the Today screen's "Connect your Nura" card
+ * (PRD 2, section 42). Nothing here implies a robot is connected
+ * (PRD 1, section 47).
  */
 import { useRouter } from 'expo-router';
 import { Image, View } from 'react-native';

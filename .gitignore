@@ -54,3 +54,6 @@ yarn-error.*
 Thumbs.db
 .idea/
 .vscode/
+
+# PlatformIO build output and downloaded libraries
+.pio/

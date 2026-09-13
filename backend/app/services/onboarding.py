@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from app.models import User
 from app.models.enums import ONBOARDING_STATUSES
+from app.services.devices import account_has_connected_robot
 
 #: Which numbered step the user is on for a given status. Step 0 means
 #: onboarding has not started; the flow after authentication is five steps
@@ -26,6 +27,8 @@ STEP_FOR_STATUS: dict[str, int] = {
     "preferences_complete": 4,  # privacy and consent
     "consent_complete": 5,  # ready to pair
     "ready_for_pairing": 5,
+    # Pairing sits outside the numbered steps (PRD 2 has its own progress UI).
+    "robot_connected": 5,
     "onboarding_complete": 5,
 }
 
@@ -76,6 +79,11 @@ def unmet_requirement(user: User, target_status: str) -> str | None:
             return "The Terms of Service must be accepted first."
         if user.privacy_acknowledged_at is None:
             return "The Privacy Policy must be acknowledged first."
+
+    # Not something the app can simply declare: the backend must have heard from
+    # a robot this account claimed (PRD 2, sections 36 and 41).
+    if target >= status_rank("robot_connected") and not account_has_connected_robot(user):
+        return "Connect your Nura first."
 
     return None
 

@@ -74,8 +74,8 @@ def engine() -> Iterator[sa.Engine]:
     with test_engine.begin() as connection:
         connection.execute(
             sa.text(
-                "TRUNCATE account_profile_roles, profiles, user_settings, "
-                "devices, users RESTART IDENTITY CASCADE"
+                "TRUNCATE provisioning_sessions, account_profile_roles, profiles, "
+                "user_settings, devices, users RESTART IDENTITY CASCADE"
             )
         )
     yield test_engine

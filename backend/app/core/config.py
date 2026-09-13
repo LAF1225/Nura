@@ -67,6 +67,13 @@ class Settings(BaseSettings):
     #: Supabase projects and the path that requires no shared secret at all.
     supabase_jwt_secret: str | None = None
 
+    #: Where robots should reach this API once they are on Wi-Fi, e.g.
+    #: ``https://api.nura.example``. Handed to the robot during provisioning.
+    #: In development it may be left unset, in which case the address the
+    #: phone used to reach the backend is used -- that is the LAN address, which
+    #: the robot on the same Wi-Fi can reach too. Required outside development.
+    device_api_base_url: str | None = None
+
     @property
     def is_development(self) -> bool:
         return self.app_env == "development"

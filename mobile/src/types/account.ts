@@ -18,6 +18,7 @@ export type OnboardingStatus =
   | 'preferences_complete'
   | 'consent_complete'
   | 'ready_for_pairing'
+  | 'robot_connected'
   | 'onboarding_complete';
 
 /** Privacy-conscious alternative to a date of birth (PRD 1, section 20). */

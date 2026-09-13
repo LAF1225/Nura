@@ -19,6 +19,8 @@ export type ApiErrorKind =
   | 'notFound'
   /** 400 / 422 -- the request body was rejected. */
   | 'validation'
+  /** 409 -- the request conflicts with current state (e.g. already claimed). */
+  | 'conflict'
   /** 5xx, or a response we could not make sense of. */
   | 'server'
   /** No API URL was configured for this build. */
@@ -28,17 +30,25 @@ export type ApiErrorKind =
 interface ApiErrorOptions {
   status?: number;
   cause?: unknown;
+  code?: string;
 }
 
 export class ApiError extends Error {
   readonly kind: ApiErrorKind;
   readonly status?: number;
+  /**
+   * Stable machine-readable reason, when the server gave one
+   * (`{"detail": {"code": "already_claimed"}}`). Screens branch on this; they
+   * never display the server's own message.
+   */
+  readonly code?: string;
 
   constructor(kind: ApiErrorKind, message: string, options: ApiErrorOptions = {}) {
     super(message, { cause: options.cause });
     this.name = 'ApiError';
     this.kind = kind;
     this.status = options.status;
+    this.code = options.code;
   }
 }
 
@@ -51,6 +61,7 @@ export function kindForStatus(status: number): ApiErrorKind {
   if (status === 401 || status === 403) return 'unauthorized';
   if (status === 404) return 'notFound';
   if (status === 400 || status === 422) return 'validation';
+  if (status === 409) return 'conflict';
   if (status >= 500) return 'server';
   return 'unknown';
 }
@@ -62,6 +73,7 @@ const MESSAGES: Record<ApiErrorKind, string> = {
   unauthorized: 'You do not have access to this. Please sign in again.',
   notFound: 'We could not find what you were looking for.',
   validation: 'Some of the details were not accepted. Please review and try again.',
+  conflict: 'That could not be done right now. Please refresh and try again.',
   server: 'Something went wrong on our side. Please try again shortly.',
   configuration: 'Nura is not configured to reach its services in this build.',
   unknown: 'Something unexpected happened. Please try again.',

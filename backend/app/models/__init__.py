@@ -5,7 +5,7 @@ single ``import app.models``, which is what Alembic relies on to autogenerate
 migrations.
 """
 
-from app.models.device import DEVICE_TYPE_XIAO_ESP32S3, Device
+from app.models.device import DEVICE_TYPE_XIAO_ESP32S3, Device, ProvisioningSession
 from app.models.profile import AccountProfileRole, Profile
 from app.models.user import User, UserSettings
 
@@ -14,6 +14,7 @@ __all__ = [
     "AccountProfileRole",
     "Device",
     "Profile",
+    "ProvisioningSession",
     "User",
     "UserSettings",
 ]

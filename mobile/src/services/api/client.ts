@@ -56,6 +56,20 @@ async function classifyNetworkFailure(): Promise<'offline' | 'unavailable'> {
 }
 
 /**
+ * The `code` from a `{"detail": {"code": ...}}` error body, if there is one.
+ * Only the code is kept; the server's message is never shown to users.
+ */
+async function readErrorCode(response: Response): Promise<string | undefined> {
+  try {
+    const body = (await response.json()) as { detail?: { code?: unknown } };
+    const code = body?.detail?.code;
+    return typeof code === 'string' ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Performs a JSON request against the API.
  *
  * @param path path beginning with `/`, e.g. `/health` or `/api/v1/version`.
@@ -115,11 +129,12 @@ export async function apiRequest<T>(
   }
 
   if (!response.ok) {
-    log.warn('request returned an error status', { path, status: response.status });
+    const code = await readErrorCode(response);
+    log.warn('request returned an error status', { path, status: response.status, code });
     throw new ApiError(
       kindForStatus(response.status),
       `Request to ${path} failed with status ${response.status}.`,
-      { status: response.status }
+      { status: response.status, code }
     );
   }
 

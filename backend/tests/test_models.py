@@ -6,7 +6,14 @@ required.
 """
 
 from app.db.base import Base
-from app.models import AccountProfileRole, Device, Profile, User, UserSettings
+from app.models import (
+    AccountProfileRole,
+    Device,
+    Profile,
+    ProvisioningSession,
+    User,
+    UserSettings,
+)
 
 
 def test_table_set_matches_the_prds() -> None:
@@ -16,6 +23,7 @@ def test_table_set_matches_the_prds() -> None:
         "devices",
         "profiles",
         "account_profile_roles",
+        "provisioning_sessions",
     }
 
 
@@ -93,4 +101,29 @@ def test_device_identity_is_the_uuid_not_the_hardware_id() -> None:
     """PRD 0, section 17: the internal UUID is the identity."""
     primary_key = [column.name for column in Device.__table__.primary_key.columns]
     assert primary_key == ["id"]
-    assert Device.__table__.columns["device_identifier"].index is True
+    assert Device.__table__.columns["hardware_id"].index is True
+    assert Device.__table__.columns["hardware_id"].unique is True
+
+
+def test_device_credentials_are_stored_only_as_hashes() -> None:
+    """PRD 2, section 55: no plaintext token or secret columns."""
+    columns = set(Device.__table__.columns.keys())
+    assert {"bootstrap_secret_hash", "device_token_hash"} <= columns
+    assert not {"device_token", "bootstrap_secret", "wifi_password", "ssid"} & columns
+
+    session_columns = set(ProvisioningSession.__table__.columns.keys())
+    assert "token_hash" in session_columns
+    assert "token" not in session_columns
+
+
+def test_device_tables_hold_no_medical_information() -> None:
+    """PRD 2, section 56: provisioning needs no medical data."""
+    forbidden = {
+        "diagnosis",
+        "medication",
+        "medications",
+        "symptoms",
+        "emergency_contact",
+    }
+    for model in (Device, ProvisioningSession):
+        assert set(model.__table__.columns.keys()) & forbidden == set()

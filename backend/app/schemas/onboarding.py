@@ -15,6 +15,7 @@ OnboardingStatus = Literal[
     "preferences_complete",
     "consent_complete",
     "ready_for_pairing",
+    "robot_connected",
     "onboarding_complete",
 ]
 

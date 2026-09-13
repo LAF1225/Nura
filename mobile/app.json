@@ -38,7 +38,14 @@
         }
       ],
       "expo-web-browser",
-      "expo-localization"
+      "expo-localization",
+      [
+        "react-native-ble-manager",
+        {
+          "neverForLocation": true,
+          "bluetoothAlwaysPermission": "Nura uses Bluetooth during setup to securely connect your phone to your robot."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

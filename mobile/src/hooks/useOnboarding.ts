@@ -51,6 +51,7 @@ export function routeForStatus(status: OnboardingStatus): OnboardingRoute | null
     case 'consent_complete':
       return '/ready';
     case 'ready_for_pairing':
+    case 'robot_connected':
     case 'onboarding_complete':
       return null;
   }

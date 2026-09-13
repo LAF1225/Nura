@@ -84,8 +84,9 @@ class User(Base, TimestampMixin):
     settings: Mapped["UserSettings | None"] = relationship(
         back_populates="user", cascade="all, delete-orphan", uselist=False
     )
+    #: Robots this account has claimed (PRD 2, section 31).
     devices: Mapped[list["Device"]] = relationship(
-        back_populates="owner", cascade="all, delete-orphan"
+        back_populates="claimed_by", cascade="all, delete-orphan"
     )
     profile_roles: Mapped[list["AccountProfileRole"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
