@@ -92,6 +92,9 @@ constexpr size_t TAG_LENGTH = 16;       // AES-GCM
 constexpr size_t WIFI_KEY_LENGTH = 16;  // AES-128
 constexpr uint8_t WIFI_CONFIG_VERSION = 1;
 constexpr size_t MAX_ATTRIBUTE_LENGTH = 512;
+//: Big enough for the 98-byte PAKE response in a single notification. The app
+//: requests the same value on Android; iOS negotiates its own.
+constexpr uint16_t BLE_PREFERRED_MTU = 247;
 
 // --- Limits and timings (docs section 4, 6 and 8) --------------------------
 constexpr size_t CODE_DIGITS = 6;

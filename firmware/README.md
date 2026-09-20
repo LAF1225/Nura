@@ -1,14 +1,21 @@
 # Nura firmware
 
-**Empty by design.** Firmware for the Nura robot is not part of PRD 0 and must
-not be added until the robot-connectivity PRD.
+Firmware for the Nura robot, built around the **Seeed Studio XIAO ESP32-S3**.
 
-## Target hardware
+```text
+firmware/
+├── xiao_esp32s3/     the robot firmware (PlatformIO)
+└── .venv/            PlatformIO itself, not tracked in git
+```
 
-**Seeed Studio XIAO ESP32-S3** — Bluetooth Low Energy and Wi-Fi, which is what
-makes the two-transport strategy possible.
+Everything — how to build, flash, test, and what the robot does in each
+situation — is in [xiao_esp32s3/README.md](xiao_esp32s3/README.md).
 
-## Planned role
+> **The robot has not been built.** The firmware compiles and its cryptography
+> matches published test vectors, but nothing in this directory has run on
+> hardware.
+
+## Role
 
 ```text
 First-time setup / recovery          Normal operation
@@ -19,26 +26,24 @@ First-time setup / recovery          Normal operation
   XIAO ESP32-S3                                  Mobile app ┘
 ```
 
-- **BLE** for first-time discovery, verifying the physical unit, receiving
-  Wi-Fi credentials, and recovery when the network changes.
-- **Wi-Fi** for all normal operation, talking to the backend rather than to the
-  phone directly.
+- **BLE** for discovery, verifying the physical unit, receiving Wi-Fi
+  credentials, and recovery when the network changes.
+- **Wi-Fi** for normal operation, talking to the backend rather than the phone.
 
-The transport between robot and backend — WebSockets or MQTT — is deliberately
-undecided. See
-[ADR 0003](../docs/decisions/0003-device-connectivity.md).
+The wire format is
+[the provisioning protocol](../docs/device/provisioning-protocol.md); the
+reasoning behind the library and crypto choices is
+[ADR 0005](../docs/decisions/0005-ble-pairing.md), and the two-transport
+strategy is [ADR 0003](../docs/decisions/0003-device-connectivity.md).
 
-## What the backend already provides
+## What the backend provides
 
-The `devices` table exists, so firmware work has a schema to target:
+| Column              | Firmware relevance                                     |
+| ------------------- | ------------------------------------------------------ |
+| `hardware_id`       | Derived from the factory MAC; what BLE advertises       |
+| `device_type`       | `xiao-esp32-s3`                                        |
+| `firmware_version`  | Reported on claim and on every heartbeat                |
+| `last_seen_at`      | Updated by heartbeats; the only source of online status |
 
-| Column              | Firmware relevance                                    |
-| ------------------- | ----------------------------------------------------- |
-| `device_identifier` | Provisioned on the hardware; what BLE advertises      |
-| `device_type`       | `xiao-esp32-s3`                                       |
-| `firmware_version`  | Reported by the device on check-in                    |
-| `last_seen_at`      | Updated when the device contacts the backend          |
-
-`device_identifier` is unique but is **not** the primary key. The backend's own
-UUID is the device's identity — see
-[the system overview](../docs/architecture/system-overview.md).
+`hardware_id` is unique but is **not** the primary key: the backend's own UUID
+is the device's identity.

@@ -34,14 +34,23 @@ interface FlowErrorCardProps {
   busy?: boolean;
 }
 
-export function FlowErrorCard({ error, onAction, exclude = [], busy }: FlowErrorCardProps) {
+export function FlowErrorCard({
+  error,
+  onAction,
+  exclude = [],
+  busy,
+}: FlowErrorCardProps) {
   const info = FLOW_ERRORS[error];
   const actions = info.actions.filter((action) => !exclude.includes(action));
 
   return (
     <View style={{ gap: spacing.md }}>
       <Card style={{ gap: spacing.xs }}>
-        <AppText variant="heading" accessibilityRole="header" accessibilityLiveRegion="polite">
+        <AppText
+          variant="heading"
+          accessibilityRole="header"
+          accessibilityLiveRegion="polite"
+        >
           {info.title}
         </AppText>
         <AppText variant="body" tone="secondary">

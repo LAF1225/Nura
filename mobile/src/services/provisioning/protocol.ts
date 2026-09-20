@@ -108,7 +108,10 @@ export const ONLINE_WAIT_TIMEOUT_MS = 90_000;
 /** How long to wait for the robot to answer a PAIRING or STATUS exchange. */
 export const RESPONSE_TIMEOUT_MS = 15_000;
 
-function nameFor<T extends Record<string, number>>(table: T, value: number): keyof T | null {
+function nameFor<T extends Record<string, number>>(
+  table: T,
+  value: number
+): keyof T | null {
   const entry = Object.entries(table).find(([, code]) => code === value);
   return entry ? (entry[0] as keyof T) : null;
 }
@@ -150,7 +153,10 @@ export function parseDeviceInfo(bytes: Uint8Array): DeviceInfo {
   if (info.protocol !== PROTOCOL_VERSION) {
     throw new ProtocolError(`Unsupported protocol version: ${String(info.protocol)}.`);
   }
-  if (typeof info.hardware_id !== 'string' || !HARDWARE_ID_PATTERN.test(info.hardware_id)) {
+  if (
+    typeof info.hardware_id !== 'string' ||
+    !HARDWARE_ID_PATTERN.test(info.hardware_id)
+  ) {
     throw new ProtocolError('Device info has no valid hardware id.');
   }
   return {

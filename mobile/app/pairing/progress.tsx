@@ -45,13 +45,17 @@ export default function ProgressScreen() {
       .then((device) => {
         if (cancelled) return;
         if (device.setupCompletedAt) {
-          router.replace({ pathname: '/pairing/success', params: { deviceId, mode: 'reconnected' } });
+          router.replace({
+            pathname: '/pairing/success',
+            params: { deviceId, mode: 'reconnected' },
+          });
         } else {
           router.replace({ pathname: '/pairing/name', params: { deviceId } });
         }
       })
       .catch(() => {
-        if (!cancelled) router.replace({ pathname: '/pairing/name', params: { deviceId } });
+        if (!cancelled)
+          router.replace({ pathname: '/pairing/name', params: { deviceId } });
       });
     return () => {
       cancelled = true;
@@ -76,7 +80,11 @@ export default function ProgressScreen() {
 
   return (
     <Screen>
-      <AppText variant="title" accessibilityRole="header" style={{ marginBottom: spacing.lg }}>
+      <AppText
+        variant="title"
+        accessibilityRole="header"
+        style={{ marginBottom: spacing.lg }}
+      >
         Setting up Nura
       </AppText>
 
@@ -90,8 +98,8 @@ export default function ProgressScreen() {
         </AppText>
         {bleDropped ? (
           <AppText variant="body" tone="secondary" accessibilityLiveRegion="polite">
-            Your phone’s Bluetooth link to Nura has ended, which is normal at this point. We’re
-            checking with Nura services instead.
+            Your phone’s Bluetooth link to Nura has ended, which is normal at this point.
+            We’re checking with Nura services instead.
           </AppText>
         ) : null}
       </View>

@@ -11,7 +11,14 @@ import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 
-import { AppText, Button, Card, FlowErrorCard, Screen, TextField } from '../../src/components';
+import {
+  AppText,
+  Button,
+  Card,
+  FlowErrorCard,
+  Screen,
+  TextField,
+} from '../../src/components';
 import { usePairingRecovery } from '../../src/hooks/usePairingRecovery';
 import { useProvisioningFlow } from '../../src/hooks/useProvisioning';
 import { FLOW_ERRORS } from '../../src/services/provisioning';
@@ -43,7 +50,10 @@ export default function WifiScreen() {
     NetInfo.fetch()
       .then((net) => {
         if (cancelled || net.type !== 'wifi') return;
-        const details = net.details as { ssid?: string | null; frequency?: number | null };
+        const details = net.details as {
+          ssid?: string | null;
+          frequency?: number | null;
+        };
         if (details.ssid && details.ssid !== UNKNOWN_SSID) {
           setSsid((current) => current || details.ssid || '');
         }
@@ -76,7 +86,11 @@ export default function WifiScreen() {
   if (state.phase === 'failed' && !state.canRetryWifi) {
     return (
       <Screen>
-        <FlowErrorCard error={state.error} busy={recovery.busy} onAction={recovery.handle} />
+        <FlowErrorCard
+          error={state.error}
+          busy={recovery.busy}
+          onAction={recovery.handle}
+        />
       </Screen>
     );
   }
@@ -85,11 +99,16 @@ export default function WifiScreen() {
 
   return (
     <Screen>
-      <AppText variant="title" accessibilityRole="header" style={{ marginBottom: spacing.xs }}>
+      <AppText
+        variant="title"
+        accessibilityRole="header"
+        style={{ marginBottom: spacing.xs }}
+      >
         Connect Nura to Wi-Fi
       </AppText>
       <AppText variant="body" tone="secondary" style={{ marginBottom: spacing.lg }}>
-        Nura uses 2.4 GHz Wi-Fi. Many home routers automatically support both 2.4 GHz and 5 GHz.
+        Nura uses 2.4 GHz Wi-Fi. Many home routers automatically support both 2.4 GHz and
+        5 GHz.
       </AppText>
 
       {lastError ? (
@@ -148,7 +167,9 @@ export default function WifiScreen() {
           label={showPassword ? 'Hide password' : 'Show password'}
           variant="ghost"
           onPress={() => setShowPassword((current) => !current)}
-          accessibilityHint={showPassword ? 'Hides the Wi-Fi password' : 'Shows the Wi-Fi password'}
+          accessibilityHint={
+            showPassword ? 'Hides the Wi-Fi password' : 'Shows the Wi-Fi password'
+          }
           style={{ alignSelf: 'flex-start' }}
         />
       </View>

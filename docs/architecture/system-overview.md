@@ -1,6 +1,10 @@
 # System overview
 
-Status: PRD 0 — Project Foundation & Architecture.
+Status: PRD 2 — Robot Pairing, BLE Discovery & Wi-Fi Provisioning.
+
+> The robot itself has not been built. The firmware and the pairing flow exist
+> and are tested as far as software allows, but no part of the phone-to-robot
+> path has run on hardware.
 
 ## The pieces
 
@@ -39,13 +43,32 @@ lives. The backend is the only component trusted with authorisation.
 | Server state   | TanStack Query                                                                 |
 | Global state   | Zustand — theme, device selection and last onboarding step persisted           |
 | Authentication | Supabase Auth. Email verified end to end; Google, Apple and phone implemented but unverified |
-| Onboarding     | Welcome → auth → setup mode → profile → preferences → consent → ready to pair  |
-| Database       | `users`, `user_settings`, `profiles`, `account_profile_roles`, `devices`       |
-| Endpoints      | `/health`, `/api/v1/version`, `/api/v1/me`, `/api/v1/onboarding`, `/api/v1/profiles` |
+| Onboarding     | Welcome → auth → setup mode → profile → preferences → consent → ready to pair → robot connected |
+| Pairing        | BLE discovery, SPAKE2 code verification, encrypted Wi-Fi provisioning, backend claim — written and tested in software, never run on hardware |
+| Firmware       | `firmware/xiao_esp32s3`, compiles for three environments; no board exists to run it |
+| Database       | `users`, `user_settings`, `profiles`, `account_profile_roles`, `devices`, `provisioning_sessions` |
+| Endpoints      | `/health`, `/api/v1/version`, `/api/v1/me`, `/api/v1/onboarding`, `/api/v1/profiles`, `/api/v1/devices` |
 
 Deliberately absent: symptom and medication tracking, appointments, AI or
 chat, caregiver permissions, emergency detection, push notifications,
-HealthKit, Health Connect, and robot pairing.
+HealthKit and Health Connect.
+
+### How a robot joins an account
+
+```text
+App ──BLE──▶ Robot          six-digit code on the robot's screen proves
+    ◀───────                the user picked the right physical unit (SPAKE2)
+App ──HTTPS─▶ Backend       short-lived, single-use provisioning token
+App ──BLE──▶ Robot          Wi-Fi details + token, AES-GCM under the session key
+              Robot ──▶ Backend   claim: token + the robot's own secret
+              Robot ──▶ Backend   heartbeat
+App ──HTTPS─▶ Backend       "is it online?" -- the only thing that decides success
+```
+
+The app never decides a robot is online, and the robot never sees the user's
+access token. The full wire format is in
+[the provisioning protocol](../device/provisioning-protocol.md); the crypto
+reasoning is [ADR 0005](../decisions/0005-ble-pairing.md).
 
 ### Account holder vs. the person Nura is for
 
@@ -183,18 +206,34 @@ profiles  (the person Nura is for)        account_profile_roles
   avatar_url      reserved; no upload UI
   created_at, updated_at
 
-user_settings                         devices
-  id          uuid, pk                  id                uuid, pk
-  user_id     unique → users            owner_user_id     → users (cascade)
-  theme       system|light|dark         device_identifier unique, indexed
-  language                              display_name
-  larger_text                           device_type
-  high_contrast                         firmware_version
-  reduce_motion                         last_seen_at
-  voice_first_preference                created_at, updated_at
-  simplified_interface
+user_settings                         devices  (a robot that has reached the backend)
+  id          uuid, pk                  id                     uuid, pk
+  user_id     unique → users            hardware_id            unique, indexed
+  theme       system|light|dark         claimed_by_account_id  → users (cascade), nullable
+  language                              owner_profile_id       → profiles (set null)
+  larger_text                           display_name           a label, never identity
+  high_contrast                         device_type            firmware_version
+  reduce_motion                         provisioning_status    unclaimed | claimed
+  voice_first_preference                bootstrap_secret_hash  ┐ sha-256 only;
+  simplified_interface                  device_token_hash      ┘ never reversible
+  created_at, updated_at                claimed_at, last_seen_at
+                                        setup_completed_at
+                                        introduction_requested_at, introduced_at
+                                        created_at, updated_at
+
+provisioning_sessions  (one robot may join one account, briefly)
+  id          uuid, pk        token_hash   sha-256, unique
+  account_id  → users         expires_at   10 minutes
+  profile_id  → profiles      consumed_at  set by the claim that used it
+  hardware_id indexed         device_id    → devices (set null)
   created_at, updated_at
 ```
+
+`connection_status` is deliberately **not** a column: it is derived from
+`last_seen_at` on every read, so it cannot go stale. Credentials are stored
+only as hashes, so a leak of this table reveals no secret. The prototype's
+trust model for `bootstrap_secret_hash` — trust on first claim, rather than a
+credential written at manufacture — is spelled out in the protocol document.
 
 Value sets (`theme`, `setup_mode`, `onboarding_status`, `age_range`, `role`) are
 enforced by database CHECK constraints, not only in application code, and are

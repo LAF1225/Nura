@@ -2,6 +2,13 @@
 
 Status: PRD 2. Protocol version **1**.
 
+> **Not yet exercised on hardware.** The robot has not been built, so every
+> exchange described here has been verified only in software: the app's and the
+> firmware's cryptography against published test vectors and against each
+> other, and the whole flow against a simulated robot. Until a board runs it,
+> treat this as the specification rather than as a description of something
+> observed working.
+
 This is the contract between the mobile app, the XIAO ESP32-S3 firmware and the
 backend for first-time setup and Wi-Fi recovery. Every UUID, message layout,
 state and error code used by any of the three lives here.
@@ -315,6 +322,7 @@ for the life of the BLE connection.
 | Rule                                   | Value                                   |
 | -------------------------------------- | --------------------------------------- |
 | Code                                   | 6 digits from the hardware RNG. Never a factory PIN. |
+| Shown on                               | The robot's screen. With no screen fitted, a development build prints it to the serial log — developers only (PRD 2, section 20). |
 | Generated                              | When a phone connects while in pairing mode. |
 | Expires                                | 120 s after it was shown; a new one replaces it. |
 | Failed attempts per connection         | 3, then `TOO_MANY_ATTEMPTS` and disconnect. |

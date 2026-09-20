@@ -58,7 +58,11 @@ export default function NameScreen() {
 
   return (
     <Screen>
-      <AppText variant="title" accessibilityRole="header" style={{ marginBottom: spacing.xs }}>
+      <AppText
+        variant="title"
+        accessibilityRole="header"
+        style={{ marginBottom: spacing.xs }}
+      >
         Nura is connected
       </AppText>
       <AppText variant="body" tone="secondary" style={{ marginBottom: spacing.lg }}>

@@ -41,7 +41,10 @@ export function mergeScanResult(
     rssi: result.rssi,
   };
   const others = list.filter((item) => item.peripheralId !== result.id);
-  return sortByProximity([...others, { ...entry, shortId: entry.shortId ?? findShortId(list, result.id) }]);
+  return sortByProximity([
+    ...others,
+    { ...entry, shortId: entry.shortId ?? findShortId(list, result.id) },
+  ]);
 }
 
 function findShortId(list: DiscoveredNura[], id: string): string | null {

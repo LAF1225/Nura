@@ -80,9 +80,15 @@ function RobotCard() {
         {connectionSentence(nura.displayName, nura.connectionStatus, nura.lastSeenAt)}
       </AppText>
       <Button
-        label={nura.connectionStatus === 'online' ? 'View connection' : 'Troubleshoot connection'}
+        label={
+          nura.connectionStatus === 'online'
+            ? 'View connection'
+            : 'Troubleshoot connection'
+        }
         variant="secondary"
-        onPress={() => router.push({ pathname: '/devices/[id]', params: { id: nura.id } })}
+        onPress={() =>
+          router.push({ pathname: '/devices/[id]', params: { id: nura.id } })
+        }
       />
     </Card>
   );

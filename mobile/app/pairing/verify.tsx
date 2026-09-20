@@ -8,7 +8,14 @@ import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
-import { AppText, Button, Card, FlowErrorCard, Screen, TextField } from '../../src/components';
+import {
+  AppText,
+  Button,
+  Card,
+  FlowErrorCard,
+  Screen,
+  TextField,
+} from '../../src/components';
 import { usePairingRecovery } from '../../src/hooks/usePairingRecovery';
 import { useProvisioningFlow } from '../../src/hooks/useProvisioning';
 import { shortIdFor } from '../../src/services/provisioning/protocol';
@@ -44,22 +51,24 @@ export default function VerifyScreen() {
     }
   }, [state.phase, router]);
 
-  useEffect(() => {
-    // A rejected code clears the field so the new attempt starts fresh.
-    if (state.phase === 'awaitingCode' && state.notice) setCode('');
-  }, [state]);
-
   function submit() {
     const problem = validateCode(code);
     setError(problem);
     if (problem) return;
     void flow.submitCode(normaliseCode(code));
+    // Cleared on submit so a rejected code does not have to be deleted by
+    // hand before trying the new one Nura is showing.
+    setCode('');
   }
 
   if (state.phase === 'failed') {
     return (
       <Screen>
-        <FlowErrorCard error={state.error} busy={recovery.busy} onAction={recovery.handle} />
+        <FlowErrorCard
+          error={state.error}
+          busy={recovery.busy}
+          onAction={recovery.handle}
+        />
       </Screen>
     );
   }
@@ -95,12 +104,16 @@ export default function VerifyScreen() {
 
   return (
     <Screen>
-      <AppText variant="title" accessibilityRole="header" style={{ marginBottom: spacing.xs }}>
+      <AppText
+        variant="title"
+        accessibilityRole="header"
+        style={{ marginBottom: spacing.xs }}
+      >
         Is this your Nura?
       </AppText>
       <AppText variant="body" tone="secondary" style={{ marginBottom: spacing.lg }}>
-        Connected to Nura • {shortIdFor(state.info.hardwareId)}. Enter the 6-digit code shown on
-        Nura’s screen.
+        Connected to Nura • {shortIdFor(state.info.hardwareId)}. Enter the 6-digit code
+        shown on Nura’s screen.
       </AppText>
 
       {notice ? (

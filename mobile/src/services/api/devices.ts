@@ -24,7 +24,11 @@ function record(value: unknown, endpoint: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function requiredString(body: Record<string, unknown>, key: string, endpoint: string): string {
+function requiredString(
+  body: Record<string, unknown>,
+  key: string,
+  endpoint: string
+): string {
   const value = body[key];
   if (typeof value !== 'string' || value.length === 0) {
     throw new ApiError('server', `${endpoint} response is missing ${key}.`);
@@ -41,8 +45,15 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback
 }
 
 const CONNECTION_STATUSES: readonly ConnectionStatus[] = ['unknown', 'online', 'offline'];
-const PROVISIONING_STATUSES: readonly DeviceProvisioningStatus[] = ['unclaimed', 'claimed'];
-const SESSION_STATES: readonly ProvisioningSessionState[] = ['pending', 'claimed', 'expired'];
+const PROVISIONING_STATUSES: readonly DeviceProvisioningStatus[] = [
+  'unclaimed',
+  'claimed',
+];
+const SESSION_STATES: readonly ProvisioningSessionState[] = [
+  'pending',
+  'claimed',
+  'expired',
+];
 
 export function parseDevice(raw: unknown): Device {
   const endpoint = '/api/v1/devices';
@@ -75,7 +86,9 @@ export function parseDeviceStatus(raw: unknown): DeviceStatus {
     lastSeenAt: optionalString(body.last_seen_at),
     checkedInSinceClaim: body.checked_in_since_claim === true,
     onlineThresholdSeconds:
-      typeof body.online_threshold_seconds === 'number' ? body.online_threshold_seconds : 90,
+      typeof body.online_threshold_seconds === 'number'
+        ? body.online_threshold_seconds
+        : 90,
     provisioningStatus: oneOf(body.provisioning_status, PROVISIONING_STATUSES, 'claimed'),
     firmwareVersion: optionalString(body.firmware_version),
     setupCompleted: body.setup_completed === true,
@@ -102,7 +115,9 @@ export async function fetchDeviceStatus(
   signal?: AbortSignal
 ): Promise<DeviceStatus> {
   return parseDeviceStatus(
-    await apiRequest<unknown>(`/api/v1/devices/${encodeURIComponent(id)}/status`, { signal })
+    await apiRequest<unknown>(`/api/v1/devices/${encodeURIComponent(id)}/status`, {
+      signal,
+    })
   );
 }
 
@@ -117,9 +132,12 @@ export async function renameDevice(id: string, displayName: string): Promise<Dev
 
 export async function completeDeviceSetup(id: string): Promise<Device> {
   return parseDevice(
-    await apiRequest<unknown>(`/api/v1/devices/${encodeURIComponent(id)}/complete-setup`, {
-      method: 'POST',
-    })
+    await apiRequest<unknown>(
+      `/api/v1/devices/${encodeURIComponent(id)}/complete-setup`,
+      {
+        method: 'POST',
+      }
+    )
   );
 }
 

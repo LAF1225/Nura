@@ -27,7 +27,10 @@ export default function PairingLayout() {
         name="progress"
         options={{ headerBackVisible: false, gestureEnabled: false }}
       />
-      <Stack.Screen name="name" options={{ headerBackVisible: false, gestureEnabled: false }} />
+      <Stack.Screen
+        name="name"
+        options={{ headerBackVisible: false, gestureEnabled: false }}
+      />
       <Stack.Screen
         name="success"
         options={{ headerBackVisible: false, gestureEnabled: false }}

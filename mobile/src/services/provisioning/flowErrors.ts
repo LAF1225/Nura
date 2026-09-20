@@ -51,7 +51,8 @@ export interface FlowErrorInfo {
 export const FLOW_ERRORS: Record<FlowErrorKind, FlowErrorInfo> = {
   bluetoothOff: {
     title: 'Bluetooth is off',
-    message: 'Turn on Bluetooth so your phone can find Nura. You only need it during setup.',
+    message:
+      'Turn on Bluetooth so your phone can find Nura. You only need it during setup.',
     actions: ['turnOnBluetooth', 'findAgain'],
   },
   bluetoothUnsupported: {
@@ -73,7 +74,8 @@ export const FLOW_ERRORS: Record<FlowErrorKind, FlowErrorInfo> = {
   },
   noNuraFound: {
     title: 'We couldn’t find Nura',
-    message: 'Make sure Nura is powered on, close by, and showing that it’s ready to pair.',
+    message:
+      'Make sure Nura is powered on, close by, and showing that it’s ready to pair.',
     actions: ['findAgain', 'pairingHelp'],
   },
   connectionFailed: {
@@ -88,7 +90,8 @@ export const FLOW_ERRORS: Record<FlowErrorKind, FlowErrorInfo> = {
   },
   notInPairingMode: {
     title: 'Nura isn’t ready to pair',
-    message: 'Hold the button on Nura for 3 seconds until it shows it’s ready, then try again.',
+    message:
+      'Hold the button on Nura for 3 seconds until it shows it’s ready, then try again.',
     actions: ['findAgain', 'pairingHelp'],
   },
   disconnected: {
@@ -98,12 +101,14 @@ export const FLOW_ERRORS: Record<FlowErrorKind, FlowErrorInfo> = {
   },
   tooManyAttempts: {
     title: 'Too many incorrect codes',
-    message: 'For your security, Nura has stopped this attempt. Find Nura again to get a new code.',
+    message:
+      'For your security, Nura has stopped this attempt. Find Nura again to get a new code.',
     actions: ['findAgain'],
   },
   wifiAuthFailed: {
     title: 'Wi-Fi password didn’t work',
-    message: 'Nura couldn’t connect to this Wi-Fi network. Check the password and try again.',
+    message:
+      'Nura couldn’t connect to this Wi-Fi network. Check the password and try again.',
     actions: ['retryPassword', 'chooseNetwork'],
   },
   wifiNotFound: {
@@ -114,7 +119,8 @@ export const FLOW_ERRORS: Record<FlowErrorKind, FlowErrorInfo> = {
   },
   wifiTimeout: {
     title: 'The network didn’t respond',
-    message: 'Nura tried to join but didn’t hear back in time. Moving Nura closer to the router can help.',
+    message:
+      'Nura tried to join but didn’t hear back in time. Moving Nura closer to the router can help.',
     actions: ['tryAgain', 'chooseNetwork'],
   },
   wifiUnsupported: {
@@ -160,8 +166,7 @@ export const FLOW_ERRORS: Record<FlowErrorKind, FlowErrorInfo> = {
   },
   robotWentOffline: {
     title: 'Nura hasn’t come online yet',
-    message:
-      'Nura may still be connecting. Check again in a moment, or try setup again.',
+    message: 'Nura may still be connecting. Check again in a moment, or try setup again.',
     actions: ['checkAgain', 'tryAgain', 'pairingHelp'],
   },
   unknown: {

@@ -146,10 +146,67 @@ someone else returns **`404`, not `403`**, so the endpoint does not confirm the
 id exists. An account may hold one `self` profile plus any number of
 `setup_helper` ones.
 
-## Not implemented yet
+---
 
-No endpoint reads or writes `devices`. The table and model exist; pairing
-routes arrive with PRD 2.
+## Devices (PRD 2)
+
+Two kinds of caller use these routes, and they authenticate differently.
+
+**The app**, with the user's access token, for everything the person does.
+**The robot**, with credentials of its own, for the two routes it calls over
+Wi-Fi. A user's token is never given to the robot, and a device token is
+refused everywhere else. Full request and response shapes are at
+<http://localhost:8000/docs>; the flow they serve is in
+[the provisioning protocol](../device/provisioning-protocol.md).
+
+### App routes
+
+| Route | Purpose |
+| ----- | ------- |
+| `POST /api/v1/devices/provisioning-sessions` | A single-use token, valid 10 minutes, for one `hardware_id`. Refused with `409 onboarding_incomplete` before PRD 1's flow is done, or `409 already_claimed` if that robot belongs to someone else — before any Wi-Fi details are sent. |
+| `GET /api/v1/devices/provisioning-sessions/{id}` | `pending`, `claimed` or `expired`. Polled while the robot joins Wi-Fi, and the reason losing Bluetooth mid-setup is survivable. |
+| `GET /api/v1/devices` · `GET /api/v1/devices/{id}` | The account's robots. |
+| `PATCH /api/v1/devices/{id}` | Rename. A label only: it never becomes identity. |
+| `GET /api/v1/devices/{id}/status` | Connection status, last seen, and whether the robot has checked in since its claim. |
+| `POST /api/v1/devices/{id}/complete-setup` | Finishes first-time setup: asks for the introduction and advances onboarding to `robot_connected`. `409 device_not_online` unless the backend has genuinely heard from the robot. |
+
+A device id belonging to another account returns **404, not 403** — the same
+rule as profiles.
+
+### Robot routes
+
+| Route | Purpose |
+| ----- | ------- |
+| `POST /api/v1/devices/claim` | Trades a provisioning token plus the robot's bootstrap secret for a device token. |
+| `POST /api/v1/devices/heartbeat` | `Authorization: Bearer <device token>`. Updates `last_seen_at`, and returns the next interval plus whether to play the introduction. |
+
+Errors on these routes carry a stable code the firmware and app branch on:
+
+```json
+{ "detail": { "code": "already_claimed", "message": "..." } }
+```
+
+| Code | Status | Meaning |
+| ---- | ------ | ------- |
+| `provisioning_token_invalid` | 401 | Unknown, expired, consumed or mismatched. Deliberately one code for all four, so probing reveals nothing. |
+| `identity_mismatch` | 403 | A different board is claiming a known `hardware_id`. |
+| `already_claimed` | 409 | Linked to another account. |
+| `device_not_online` | 409 | No heartbeat since the claim. |
+
+### Online, offline, unknown
+
+`connection_status` is **derived on every read** from `last_seen_at`, never
+stored, so it cannot go stale: `unknown` before the first heartbeat, `online`
+within 90 seconds of one, `offline` after. Heartbeats are every 30 seconds,
+dropping to 5 while setup finishes. Completing BLE provisioning does not make a
+robot online; only a heartbeat does.
+
+### Credentials
+
+Both the provisioning token and the device token are 256 random bits, stored
+only as SHA-256 hashes, and shown exactly once. The robot's bootstrap secret is
+stored the same way. Nothing in the `devices` table can be turned back into a
+credential.
 
 ## Rules for every future endpoint
 

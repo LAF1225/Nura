@@ -88,7 +88,11 @@ export default function DeviceScreen() {
 
   return (
     <Screen>
-      <AppText variant="title" accessibilityRole="header" style={{ marginBottom: spacing.sm }}>
+      <AppText
+        variant="title"
+        accessibilityRole="header"
+        style={{ marginBottom: spacing.sm }}
+      >
         {nura.displayName}
       </AppText>
 
@@ -101,7 +105,10 @@ export default function DeviceScreen() {
 
       <View style={{ gap: spacing.md, marginTop: spacing.lg }}>
         {offline ? (
-          <Button label="Troubleshoot connection" onPress={() => router.push('/pairing/help')} />
+          <Button
+            label="Troubleshoot connection"
+            onPress={() => router.push('/pairing/help')}
+          />
         ) : null}
 
         <ListGroup>

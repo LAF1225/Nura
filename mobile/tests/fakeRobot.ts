@@ -47,9 +47,7 @@ export const HARDWARE_ID = 'NURA-3C84279A1B2C';
 export const PERIPHERAL_ID = 'AA:BB:CC:DD:1B:2C';
 
 export type WifiBehaviour =
-  | 'joins'
-  | { fail: ProvisioningErrorName }
-  | 'joinsThenDropsBle';
+  'joins' | { fail: ProvisioningErrorName } | 'joinsThenDropsBle';
 
 type Listener = (value: Uint8Array) => void;
 
@@ -235,7 +233,10 @@ export class FakeRobot implements BleTransport {
         aad: utf8ToBytes('nura-provisioning-v1'),
       });
       this.pending = { pA, cA: keys.cA, ke: keys.ke };
-      this.notify(UUIDS.pairing, Uint8Array.of(PairingMessage.PAKE_RESPONSE, ...pB, ...keys.cB));
+      this.notify(
+        UUIDS.pairing,
+        Uint8Array.of(PairingMessage.PAKE_RESPONSE, ...pB, ...keys.cB)
+      );
       return;
     }
     if (value[0] === PairingMessage.PAKE_CONFIRM && this.pending) {

@@ -37,9 +37,15 @@ export function ConnectionChip({ status }: { status: ConnectionStatus }) {
   return (
     <StatusChip
       label={connectionLabel(status)}
-      tone={status === 'online' ? 'success' : status === 'offline' ? 'warning' : 'neutral'}
+      tone={
+        status === 'online' ? 'success' : status === 'offline' ? 'warning' : 'neutral'
+      }
       icon={
-        status === 'online' ? 'wifi' : status === 'offline' ? 'cloud-offline-outline' : undefined
+        status === 'online'
+          ? 'wifi'
+          : status === 'offline'
+            ? 'cloud-offline-outline'
+            : undefined
       }
     />
   );

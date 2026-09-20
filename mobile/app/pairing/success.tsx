@@ -7,13 +7,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Image, View } from 'react-native';
 
-import {
-  AppText,
-  Button,
-  Card,
-  ConnectionChip,
-  Screen,
-} from '../../src/components';
+import { AppText, Button, Card, ConnectionChip, Screen } from '../../src/components';
 import { useDevice } from '../../src/hooks/useDevices';
 import { spacing } from '../../src/theme/tokens';
 
@@ -35,7 +29,11 @@ export default function SuccessScreen() {
           style={{ width: 80, height: 80 }}
           resizeMode="contain"
         />
-        <AppText variant="title" accessibilityRole="header" style={{ textAlign: 'center' }}>
+        <AppText
+          variant="title"
+          accessibilityRole="header"
+          style={{ textAlign: 'center' }}
+        >
           {reconnected ? 'Nura is back online' : 'Nura is ready'}
         </AppText>
       </View>

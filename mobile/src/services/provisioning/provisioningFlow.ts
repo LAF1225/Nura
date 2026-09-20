@@ -14,8 +14,11 @@
  *    `online` is reached only when the backend says the robot has checked in
  *    since its claim (PRD 2, section 36).
  */
-import type { ProvisioningSession } from '../../types/device';
-import type { DeviceStatus, ProvisioningSessionStatus } from '../../types/device';
+import type {
+  DeviceStatus,
+  ProvisioningSession,
+  ProvisioningSessionStatus,
+} from '../../types/device';
 import { createLogger } from '../../utils/logger';
 import type { BleTransport, Unsubscribe } from './bleTransport';
 import type { DiscoveredNura } from './discovery';
@@ -174,7 +177,8 @@ export class ProvisioningFlow {
     this.transport = deps.transport;
     this.api = deps.api;
     this.randomBytes = deps.randomBytes;
-    this.sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.sleep =
+      deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.now = deps.now ?? (() => Date.now());
     this.timing = {
       connectTimeoutMs: deps.timing?.connectTimeoutMs ?? CONNECT_TIMEOUT_MS,
@@ -267,7 +271,9 @@ export class ProvisioningFlow {
     } catch (error) {
       if (generation !== this.generation) return;
       await this.disconnectQuietly();
-      this.fail(error instanceof ProtocolError ? 'incompatibleFirmware' : 'connectionFailed');
+      this.fail(
+        error instanceof ProtocolError ? 'incompatibleFirmware' : 'connectionFailed'
+      );
       return;
     }
     if (generation !== this.generation) return;
@@ -295,7 +301,10 @@ export class ProvisioningFlow {
     try {
       const pake = startAppPake(info.hardwareId, code, this.randomBytes);
       await this.transport.write(id, UUIDS.pairing, encodePakeStart(pake.pA));
-      const reply = await this.pairingMail.next(this.timing.responseTimeoutMs, 'PAKE response');
+      const reply = await this.pairingMail.next(
+        this.timing.responseTimeoutMs,
+        'PAKE response'
+      );
       if (generation !== this.generation) return;
 
       if (reply.type === 'result') {
@@ -318,7 +327,10 @@ export class ProvisioningFlow {
       const result = await this.pairingMail.next(this.timing.responseTimeoutMs, 'result');
       if (generation !== this.generation) return;
       if (result.type !== 'result' || result.result !== 'VERIFIED') {
-        this.handlePairingRefusal(result.type === 'result' ? result.result : 'MALFORMED', info);
+        this.handlePairingRefusal(
+          result.type === 'result' ? result.result : 'MALFORMED',
+          info
+        );
         return;
       }
 
@@ -398,12 +410,21 @@ export class ProvisioningFlow {
     const generation = ++this.generation;
     const key = this.wifiKey;
 
-    this.setState({ phase: 'provisioning', info, step: 'sendingWifi', bleConnected: true });
+    this.setState({
+      phase: 'provisioning',
+      info,
+      step: 'sendingWifi',
+      bleConnected: true,
+    });
 
     try {
       // A fresh token whenever an earlier attempt reached the robot: it may
       // have been consumed by a claim.
-      if (!this.session || this.credentialsSent || this.sessionExpiresSoon(this.session)) {
+      if (
+        !this.session ||
+        this.credentialsSent ||
+        this.sessionExpiresSoon(this.session)
+      ) {
         this.session = await this.api.createSession(info.hardwareId);
       }
       this.credentialsSent = false;
@@ -476,7 +497,11 @@ export class ProvisioningFlow {
   editWifi(): void {
     if (this.state.phase !== 'failed' || !this.state.canRetryWifi || !this.info) return;
     this.generation += 1;
-    this.setState({ phase: 'awaitingWifi', info: this.info, lastError: this.state.error });
+    this.setState({
+      phase: 'awaitingWifi',
+      info: this.info,
+      lastError: this.state.error,
+    });
   }
 
   /** Resume polling after `robotWentOffline`: the robot may just have been slow. */

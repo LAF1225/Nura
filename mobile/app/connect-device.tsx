@@ -88,7 +88,11 @@ export default function ConnectDeviceScreen() {
           style={{ width: 72, height: 72 }}
           resizeMode="contain"
         />
-        <AppText variant="title" style={{ textAlign: 'center' }} accessibilityRole="header">
+        <AppText
+          variant="title"
+          style={{ textAlign: 'center' }}
+          accessibilityRole="header"
+        >
           Connect your Nura
         </AppText>
       </View>

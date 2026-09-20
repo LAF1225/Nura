@@ -62,7 +62,10 @@ describe('connecting', () => {
     const second = setup();
     second.robot.connectFailures = 5;
     await second.flow.connect(TARGET);
-    expect(second.flow.getState()).toMatchObject({ phase: 'failed', error: 'connectionFailed' });
+    expect(second.flow.getState()).toMatchObject({
+      phase: 'failed',
+      error: 'connectionFailed',
+    });
     expect(second.robot.connectCalls).toBe(2);
   });
 
@@ -70,7 +73,10 @@ describe('connecting', () => {
     const { flow, robot } = setup();
     robot.deviceInfo = { ...robot.deviceInfo, protocol: 99 };
     await flow.connect(TARGET);
-    expect(flow.getState()).toMatchObject({ phase: 'failed', error: 'incompatibleFirmware' });
+    expect(flow.getState()).toMatchObject({
+      phase: 'failed',
+      error: 'incompatibleFirmware',
+    });
   });
 });
 
@@ -120,7 +126,10 @@ describe('verification', () => {
     await context.flow.connect(TARGET);
     await context.flow.submitCode('482731');
 
-    expect(context.flow.getState()).toMatchObject({ phase: 'failed', error: 'alreadyClaimed' });
+    expect(context.flow.getState()).toMatchObject({
+      phase: 'failed',
+      error: 'alreadyClaimed',
+    });
     expect(context.robot.receivedConfigs).toHaveLength(0);
   });
 });
@@ -175,7 +184,10 @@ describe('Wi-Fi provisioning', () => {
     });
 
     flow.editWifi();
-    expect(flow.getState()).toMatchObject({ phase: 'awaitingWifi', lastError: 'wifiAuthFailed' });
+    expect(flow.getState()).toMatchObject({
+      phase: 'awaitingWifi',
+      lastError: 'wifiAuthFailed',
+    });
 
     robot.wifiBehaviour = 'joins';
     await flow.submitWifi({ ssid: WIFI.ssid, password: 'the right one!' });

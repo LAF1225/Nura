@@ -3,9 +3,16 @@
 Nura is a desktop health companion: a small robot built around a Seeed Studio
 XIAO ESP32-S3, a cross-platform mobile app, and a backend service.
 
-This repository is at **PRD 0 — Project Foundation & Architecture**. It is a
-working technical skeleton, not yet a health app: a branded five-tab app with
-Light/Dark/System themes, a FastAPI backend, and a migrated PostgreSQL schema.
+This repository is at **PRD 2 — Robot Pairing, BLE Discovery & Wi-Fi
+Provisioning**. It is a working technical skeleton, not yet a health app: a
+branded five-tab app with Light/Dark/System themes, account creation and
+onboarding, a FastAPI backend, and the firmware and app flow for connecting a
+robot.
+
+> **The robot has not been built yet.** The pairing flow, the firmware and the
+> backend are written and tested as far as software allows — the cryptography
+> matches published test vectors on both sides — but no BLE connection, Wi-Fi
+> provisioning or device registration has ever run on hardware.
 
 > **Nura does not diagnose illness, prescribe treatment or change medication
 > doses.** No health tracking, AI, caregiver or emergency functionality exists
@@ -17,7 +24,7 @@ Light/Dark/System themes, a FastAPI backend, and a migrated PostgreSQL schema.
 nura/
 ├── mobile/      React Native + Expo app (TypeScript)
 ├── backend/     FastAPI + PostgreSQL service
-├── firmware/    XIAO ESP32-S3 firmware (empty until the robot PRD)
+├── firmware/    XIAO ESP32-S3 robot firmware (PlatformIO)
 ├── docs/        Architecture notes and decision records
 └── .env.example Template for every environment variable
 ```
@@ -40,7 +47,9 @@ winget install OpenJS.NodeJS.LTS Python.Python.3.12 PostgreSQL.PostgreSQL.17 Git
 ```
 
 To run the app on a phone, also install **Expo Go** from the App Store or Play
-Store. Android Studio is only needed for native builds, not for PRD 0.
+Store. Bluetooth pairing does not work in Expo Go — that needs a development
+build and, on Android, **Android Studio** for its SDK (see section 5).
+Building the robot firmware needs **PlatformIO**, which section 6 installs.
 
 > After installing anything, open a **new** terminal so the updated `PATH` is
 > picked up.
@@ -231,20 +240,75 @@ connected** chip. That chip appears in development builds only and confirms
 the app reached `GET /health`. If the backend is not running it shows an amber
 **Nura services unavailable** chip instead — that is handled, not a crash.
 
-### Native builds
+## 5. Bluetooth needs a development build
 
-The project is prebuild-compatible, so native capabilities (BLE, background
-notifications, HealthKit, Health Connect) can be added later:
+**Expo Go cannot do Bluetooth.** It has no Nura-specific native code in it, so
+pairing screens will load but finding a robot will not work. Everything else —
+sign-in, onboarding, themes — works in Expo Go as before.
+
+To use Bluetooth you need a *development build*: your own app binary, with
+Nura's native modules in it, that Metro still hot-reloads into.
+
+**Android (free).** Install Android Studio, open it once, and let its setup
+wizard install the Android SDK — that step is a GUI and cannot be scripted.
+Then, with a phone plugged in and USB debugging enabled:
 
 ```bash
 cd mobile
-npx expo prebuild
+npx expo run:android
 ```
 
-This generates `ios/` and `android/` directories, which are intentionally not
-tracked in git.
+That builds the app, installs it, and starts Metro. After the first build,
+`npm start` and opening the Nura app on the phone is enough.
 
-## 5. Run the tests
+**iOS.** Needs a Mac with Xcode (`npx expo run:ios`), or Expo's cloud build
+plus a paid Apple Developer account. Nura's iOS Bluetooth configuration is
+written but has never been built or run.
+
+The generated `android/` and `ios/` directories are not tracked in git; delete
+them and re-run the command to start clean.
+
+## 6. The robot firmware
+
+Building and flashing the XIAO ESP32-S3, what the robot does in each state,
+and how to read its serial log are in
+[firmware/xiao_esp32s3/README.md](firmware/xiao_esp32s3/README.md). Briefly:
+
+```bash
+python -m venv firmware/.venv && firmware/.venv/Scripts/pip install platformio
+```
+
+```bash
+cd firmware/xiao_esp32s3 && ../.venv/Scripts/pio run -e xiao_esp32s3
+```
+
+Add `-t upload` with a board connected. `pio test -e xiao_esp32s3` runs the
+firmware's crypto tests on the board.
+
+## 7. Pairing a robot, once one exists
+
+This procedure has **never been carried out** — there is no robot. It is the
+intended sequence, written down so it can be followed the first time.
+
+1. Start the backend with `--host 0.0.0.0`, and check the phone can reach it.
+2. Flash a XIAO ESP32-S3 and power it. With no display fitted, watch the serial
+   monitor: the pairing code is printed there as a development fallback.
+3. Open the app, finish onboarding, and tap **Connect Nura → Find my Nura**.
+   Allow Bluetooth when asked.
+4. The robot should appear as `Nura • XXXX`. Pick it.
+5. Type the six-digit code. A wrong code must be refused; three wrong codes
+   must end the attempt.
+6. Enter your 2.4 GHz network and its password, then **Connect**.
+7. Watch the stages. The app should reach "Nura is ready" only after the
+   backend has had a heartbeat — check the robot's serial log shows
+   `[CLOUD] registered` and the backend's `last_seen_at` is moving.
+8. Name the robot, then confirm on Today that it shows as online.
+9. Power-cycle the robot: it should rejoin Wi-Fi by itself, stay linked, and
+   not advertise over Bluetooth.
+10. Hold BOOT for 3 seconds and re-run the flow with a different network: the
+    device record must stay the same one, not a second entry.
+
+## 8. Run the tests
 
 Mobile:
 
@@ -260,7 +324,18 @@ cd backend
 pytest
 ```
 
-The mobile suite needs nothing running.
+Firmware (on a connected board — they run on the ESP32 itself):
+
+```bash
+cd firmware/xiao_esp32s3
+../.venv/Scripts/pio test -e xiao_esp32s3
+```
+
+The mobile suite needs nothing running. It covers the pairing flow end to end
+against a simulated robot that runs the real protocol, and checks the app's
+cryptography against RFC 9382's test vectors. One test parses the firmware's
+`protocol.h` and fails if the app and the robot disagree about any UUID,
+message type or status code.
 
 The backend suite **does need PostgreSQL running**. It creates a separate
 `nura_test` database on first run, applies the real migrations to it, and rolls
@@ -270,7 +345,7 @@ suite needs a Supabase project or a network connection: tokens are signed with
 a key pair generated inside the test run and verified by the real production
 verifier.
 
-## 6. Code quality
+## 9. Code quality
 
 ```bash
 cd mobile
@@ -330,9 +405,12 @@ string from the Supabase dashboard into `backend/.env` and run
 | `mobile/src/services/`    | API client, auth surface, secure storage        |
 | `mobile/src/store/`       | Global state (Zustand)                          |
 | `mobile/assets/branding/` | Supplied Nura logo files                        |
+| `mobile/src/services/provisioning/` | BLE transport, SPAKE2, provisioning flow |
 | `backend/app/api/`        | HTTP routes (`/health`, `/api/v1/*`)            |
 | `backend/app/models/`     | SQLAlchemy models                               |
 | `backend/alembic/`        | Migrations                                      |
+| `firmware/xiao_esp32s3/`  | Robot firmware (PlatformIO)                     |
+| `docs/device/`            | The phone-to-robot provisioning protocol        |
 | `docs/`                   | Architecture overview and decision records      |
 
 ## Documentation
@@ -340,11 +418,15 @@ string from the Supabase dashboard into `backend/.env` and run
 - [System overview](docs/architecture/system-overview.md)
 - [Safety and emergency architecture](docs/architecture/safety-and-emergency.md)
 - [API reference](docs/api/README.md)
+- [Provisioning protocol](docs/device/provisioning-protocol.md) — UUIDs,
+  messages, states and the security model for phone-to-robot setup
+- [Firmware](firmware/xiao_esp32s3/README.md)
 - Decision records:
   [React Native + Expo](docs/decisions/0001-react-native-expo.md),
   [FastAPI + PostgreSQL](docs/decisions/0002-fastapi-postgresql.md),
   [Device connectivity](docs/decisions/0003-device-connectivity.md),
-  [Supabase Auth](docs/decisions/0004-supabase-auth.md)
+  [Supabase Auth](docs/decisions/0004-supabase-auth.md),
+  [BLE pairing](docs/decisions/0005-ble-pairing.md)
 
 ## Known issues
 
@@ -370,6 +452,25 @@ unconfigured provider is reported as unavailable.
 **The app has not been run on a physical device or emulator.** The bundle
 compiles and the suites pass, but no run on real hardware has happened yet.
 
+**No part of robot pairing has run on hardware, because the robot does not
+exist.** What that means in practice:
+
+- BLE discovery, connection, the code exchange, Wi-Fi provisioning, the claim
+  and heartbeats have never happened between a real phone and a real board.
+- The firmware compiles for all three environments and its crypto matches RFC
+  9382's vectors and a vector produced by the app, but its tests have never
+  been executed — they run on the board.
+- The display and audio drivers are written blind: the panel driver chip, the
+  amplifier and every pin in `board_config.h` are assumptions.
+- With no screen fitted, a development build prints the pairing code to the
+  serial log. That is for developers only; a shipped robot needs the display.
+- The backend and app sides of pairing *are* tested: the backend suite runs
+  against a real database, and the mobile suite drives the whole flow against a
+  simulated robot speaking the real protocol.
+
+**The spoken introduction is a placeholder.** There is no voice clip yet, so a
+fitted speaker plays a two-note chime instead of "Hi. I'm Nura."
+
 ## Troubleshooting
 
 **The app shows "Nura services unavailable".** Check the backend is running and
@@ -387,3 +488,19 @@ Windows, check with `Get-Service postgresql*`.
 updates, or add the install folder to `PATH` yourself.
 
 **Metro serves a stale bundle.** Run `npx expo start --clear`.
+
+**"Find my Nura" finds nothing.** Bluetooth does not work in Expo Go — you
+need the development build from section 5. Otherwise: check the robot is
+powered and in pairing mode, that Bluetooth is on, and, on Android 11 or
+older, that the phone's Location setting is on, which the OS requires for any
+Bluetooth scan.
+
+**The robot's log says `[CLOUD] registered` but the app says it is not
+online.** The robot reached the backend once and then could not send
+heartbeats, or it was handed an address it cannot reach. Check
+`DEVICE_API_BASE_URL` (or, when blank, that the phone reached the backend on
+its LAN address rather than `localhost`), and that the backend was started with
+`--host 0.0.0.0`.
+
+**PlatformIO cannot find the board.** Hold **BOOT**, tap **RESET**, release
+**BOOT** to force the bootloader, then pass `--upload-port COMx`.

@@ -49,7 +49,11 @@ function DeviceRow({ device, onPress }: { device: DiscoveredNura; onPress: () =>
           {signal}
         </AppText>
       </View>
-      <Ionicons name="chevron-forward" size={iconSize.sm} color={theme.colors.textSecondary} />
+      <Ionicons
+        name="chevron-forward"
+        size={iconSize.sm}
+        color={theme.colors.textSecondary}
+      />
     </Pressable>
   );
 }
@@ -71,7 +75,8 @@ export default function DiscoverScreen() {
   }
 
   const scanning = state.status === 'checking' || state.status === 'scanning';
-  const devices = state.status === 'scanning' || state.status === 'finished' ? state.devices : [];
+  const devices =
+    state.status === 'scanning' || state.status === 'finished' ? state.devices : [];
 
   if (state.status === 'blocked') {
     return (
@@ -79,7 +84,9 @@ export default function DiscoverScreen() {
         <FlowErrorCard
           error={state.reason}
           busy={recovery.busy}
-          onAction={(action) => (action === 'findAgain' ? void start() : void recovery.handle(action))}
+          onAction={(action) =>
+            action === 'findAgain' ? void start() : void recovery.handle(action)
+          }
         />
       </Screen>
     );
@@ -90,7 +97,9 @@ export default function DiscoverScreen() {
       <Screen>
         <FlowErrorCard
           error="noNuraFound"
-          onAction={(action) => (action === 'findAgain' ? void start() : void recovery.handle(action))}
+          onAction={(action) =>
+            action === 'findAgain' ? void start() : void recovery.handle(action)
+          }
         />
       </Screen>
     );
@@ -98,7 +107,11 @@ export default function DiscoverScreen() {
 
   return (
     <Screen>
-      <AppText variant="title" accessibilityRole="header" style={{ marginBottom: spacing.xs }}>
+      <AppText
+        variant="title"
+        accessibilityRole="header"
+        style={{ marginBottom: spacing.xs }}
+      >
         {scanning ? 'Looking for Nura…' : 'Choose your Nura'}
       </AppText>
       <AppText variant="body" tone="secondary" style={{ marginBottom: spacing.lg }}>
@@ -110,7 +123,12 @@ export default function DiscoverScreen() {
           accessible
           accessibilityLabel="Searching for Nura nearby"
           accessibilityLiveRegion="polite"
-          style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.md }}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: spacing.sm,
+            marginBottom: spacing.md,
+          }}
         >
           <ActivityIndicator color={theme.colors.accent} />
           <AppText variant="body" tone="secondary">
@@ -123,7 +141,11 @@ export default function DiscoverScreen() {
         <View style={{ gap: spacing.sm }}>
           <AppText variant="bodyStrong">Nearby devices</AppText>
           {devices.map((device) => (
-            <DeviceRow key={device.peripheralId} device={device} onPress={() => choose(device)} />
+            <DeviceRow
+              key={device.peripheralId}
+              device={device}
+              onPress={() => choose(device)}
+            />
           ))}
         </View>
       ) : null}
