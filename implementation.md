@@ -3,7 +3,7 @@
 How Nura is built, what exists today, and what is genuinely proven to work.
 
 - **Date:** 21 September 2026
-- **Stage:** PRD 3 — Core App Shell, Today Dashboard & Daily Check-In
+- **Stage:** PRD 4 — Medical Profile & Health Record Foundation
 - **Branch:** `prd-2-pairing` (not merged into `main`)
 
 | Commit | Stage |
@@ -13,9 +13,11 @@ How Nura is built, what exists today, and what is genuinely proven to work.
 | `aae4243` | PRD 2 checkpoint (work in progress) |
 | `f7417b4` | PRD 2 — robot pairing, BLE discovery, Wi-Fi provisioning |
 | *(uncommitted)* | PRD 3 — Today, daily check-in, dashboard cards |
+| *(uncommitted)* | PRD 4 — the health record foundation |
 
-> PRD 3 is finished and green but is still in the working tree; it has not been
-> committed. Everything below describes the code as it stands on disk.
+> PRD 3 and PRD 4 are finished and green but are still in the working tree;
+> neither has been committed. Everything below describes the code as it stands
+> on disk.
 
 > **Nura does not diagnose illness, prescribe treatment or change medication
 > doses.** No health tracking, AI, caregiver or emergency functionality has
@@ -28,16 +30,18 @@ How Nura is built, what exists today, and what is genuinely proven to work.
 Three things are true at once, and mixing them up would be the easiest way to
 misread this project.
 
-**Verified by running it.** The backend, its database schema and its rules: 100
+**Verified by running it.** The backend, its database schema and its rules: 155
 tests against a real PostgreSQL database with the real migrations applied. The
-app: 224 tests, including the real Today screen mounted and driven through a
-check-in, the whole pairing flow against a simulated robot that speaks the real
-protocol, and the offline check-in queue from submission to sync. Email sign-in
-was exercised end to end during PRD 1.
+app: 289 tests, including the real Today and Health screens mounted and driven,
+the whole pairing flow against a simulated robot that speaks the real protocol,
+and the offline check-in queue from submission to sync. Email sign-in was
+exercised end to end during PRD 1.
 
-Today needs no robot, and that is tested rather than asserted: the three
-connection states are produced by the same `last_seen_at` field a real robot
-writes, and a development script writes it directly.
+Neither Today nor the health record needs a robot, and that is tested rather
+than asserted: the Health overview test runs on an account with no device at
+all and checks that the screen loads without a single device request, while
+Today's three connection states are produced by the same `last_seen_at` field a
+real robot writes, which a development script writes directly.
 
 **Verified by construction, not by running.** The firmware compiles for three
 build configurations, and its cryptography matches RFC 9382's published test
@@ -117,6 +121,9 @@ database, so a database blip cannot make the app's connection indicator lie.
 | `GET|PUT /api/v1/daily-checkins/today` | app | today's wellbeing answer |
 | `GET /api/v1/daily-checkins/recent` | app | a short window, as a count |
 | `GET|PUT /api/v1/dashboard-preferences` | app | which cards show, and in what order |
+| `GET /api/v1/profiles/{id}/health-summary` | app | counts and completeness, never names |
+| `GET|PATCH /api/v1/profiles/{id}/health-setup` | app | resume point, and blood type |
+| `GET|POST|PATCH|DELETE /api/v1/profiles/{id}/{records}` | app | the six health record types |
 
 ### Rules the server enforces
 
@@ -145,6 +152,14 @@ These are server-side because a client cannot be trusted to enforce them:
   returned so the client adopts it.
 - **A card whose feature does not exist cannot be enabled**, so no preference
   row exists for a feature that is not there.
+- **A health record is reachable only through a profile the caller owns**, and
+  is fetched by profile and id together — so nothing is loaded first and
+  authorized second. Anything else is 404.
+- **Provenance is the server's.** A client cannot set a record's `source`, so
+  nothing can claim to have come from a clinician import when a person typed
+  it in.
+- **A date keeps its precision.** A condition or procedure may carry an exact
+  date *or* a year, never both; the database enforces it.
 
 ### Data model
 
@@ -168,6 +183,12 @@ provisioning_sessions                        device_token_hash      ┘ only
   token_hash   sha-256 only                  setup_completed_at
   expires_at   10 minutes                    introduction_requested_at
   consumed_at  set by the claim              introduced_at
+
+the health record (PRD 4)                  all owned by a profile, all
+  medical_conditions  medications            cascading with it. Approximate
+  allergies           clinicians             dates are a date *or* a year,
+  procedures          medical_notes          never both. See
+                                             docs/architecture/health-data.md
 
 daily_checkins (one person, one day)       dashboard_preferences
   profile_id      not the account            profile_id
@@ -207,11 +228,13 @@ mobile/
 │   │                          name → success, plus help
 │   ├── devices/[id].tsx       status, recovery, developer diagnostics
 │   ├── customize-today.tsx    show, hide and reorder Today's cards
+│   ├── health/                setup, sections, record forms, blood type
 │   └── connect-device.tsx     entry: existing robots, or "Find my Nura"
 └── src/
     ├── services/provisioning/ BLE transport, SPAKE2, payload, flow controller
     ├── services/checkins/     the offline check-in queue
     ├── services/dashboard/    card layout rules (pure functions)
+    ├── features/health/       section specs, form logic, API, hooks, drafts
     ├── services/auth/         Supabase, chunked secure-store session
     ├── services/api/          typed client and endpoints
     ├── components/            Screen, Card, Button, ProgressSteps, …
@@ -242,6 +265,13 @@ than repeating a stale "Online".
 the card says so plainly, and it is sent when the connection returns or when
 Today is next focused. Because the endpoint is a `PUT` keyed on person and
 date, a late arrival updates the same row rather than creating a second one.
+
+**Six health record types share one screen.** Each section declares its
+fields, its wording and how to summarise a record; one list screen and one
+form screen read that. Six hand-written CRUD screens would be six chances for
+a delete confirmation or a required-field message to drift, on the part of the
+app holding someone's medical history. The backend does the opposite and
+writes its routes out per resource — there the risk is obscurity, not drift.
 
 **The provisioning flow is a controller, not a screen.** `ProvisioningFlow`
 owns the BLE connection, the verified session and the polling, with Bluetooth
@@ -361,8 +391,8 @@ deferred.
 
 | Suite | Count | Runs against |
 | ----- | ----- | ------------ |
-| Backend (`pytest`) | 100 | real PostgreSQL, real migrations, genuinely signed ES256 tokens |
-| Mobile (`jest`) | 224 in 26 suites | pure logic, the real Today screen, and the flow against a simulated robot |
+| Backend (`pytest`) | 155 | real PostgreSQL, real migrations, genuinely signed ES256 tokens |
+| Mobile (`jest`) | 289 in 32 suites | pure logic, the real Today and Health screens, and the flow against a simulated robot |
 | Firmware (`pio test`) | 10, **never executed** | the ESP32 itself — needs a board |
 
 What the tests actually pin down:
@@ -392,8 +422,20 @@ What the tests actually pin down:
   newer one; an answer the server would always refuse is dropped rather than
   retried forever. Server-side, one account cannot read or change another
   profile's check-in or layout.
-- **Nothing hard-codes a colour.** A test reads every Today component and fails
-  on a hex literal, so Dark mode cannot be broken by a stray value.
+- **Nothing hard-codes a colour.** A test reads every Today and Health
+  component and fails on a hex literal, so Dark mode cannot be broken by a
+  stray value.
+- **Medical records belong to the right person.** Every one of the six record
+  types is checked, in both directions: full CRUD for the owner, and 404 on
+  every verb for anyone else — including on `POST`, so a stranger cannot even
+  add to someone else's profile.
+- **A half-remembered date stays half remembered.** "2015" round-trips as a
+  year through the form, the request and the database, and sending both a date
+  and a year is refused by the API and by a database constraint.
+- **The summary leaks nothing.** A test fills a profile with real-looking
+  values and asserts none of them appears in the health-summary response.
+- **Nothing is deleted silently.** The delete confirmation is asserted: its
+  wording, its two buttons, and that no request is made until it is confirmed.
 
 Also clean: `tsc`, ESLint, Prettier, Ruff, mypy.
 
@@ -453,6 +495,11 @@ Two things that catch people out:
    larger text, a screen reader on the check-in controls, reordering and hiding
    cards, and pull-to-refresh. None of this needs the robot — the connection
    states come from `scripts/seed_dev.py`.
+5. Walk through Health by hand: start setup, skip sections, come back to the
+   resume point, add and edit and remove a record of each type, set and change
+   a blood type, turn airplane mode on mid-form and confirm what you typed
+   survives, then check the screen reader on the form fields and the delete
+   confirmation.
 
 **Deferred by choice** (documented, not started): delivering the daily
 check-in reminder — the preference is recorded, but nothing schedules a
@@ -476,8 +523,10 @@ HealthKit and Health Connect.
 | [0004](docs/decisions/0004-supabase-auth.md) | Supabase issues identities; Nura verifies them and owns the data |
 | [0005](docs/decisions/0005-ble-pairing.md) | react-native-ble-manager, and SPAKE2 for the pairing code |
 | [0006](docs/decisions/0006-today-and-offline-checkins.md) | One Today endpoint, a card registry, and how an offline check-in is settled |
+| [0007](docs/decisions/0007-health-record-foundation.md) | Health records belong to a profile, dates keep their precision, provenance is the server's |
 
 Further reading: [system overview](docs/architecture/system-overview.md),
+[health data](docs/architecture/health-data.md),
 [API reference](docs/api/README.md),
 [provisioning protocol](docs/device/provisioning-protocol.md),
 [firmware](firmware/xiao_esp32s3/README.md),

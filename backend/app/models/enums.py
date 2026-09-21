@@ -63,6 +63,80 @@ AGE_RANGES = (
 #: not symptom tracking, and no clinical meaning is attached to any of them.
 WELLBEING_LEVELS = ("good", "okay", "not_great")
 
+#: --- the health record (PRD 4) ---------------------------------------------
+
+#: Where a health record came from (PRD 4, section 32). Everything written in
+#: PRD 4 is \`user\`: there is no caregiver or import path yet, and the API sets
+#: this itself rather than trusting a client, so a record can never claim a
+#: provenance it does not have.
+RECORD_SOURCES = ("user", "caregiver", "clinician_import", "system_import")
+
+#: Where a condition stands (PRD 4, section 9). \`uncertain\` is deliberately
+#: present: people are often told "possibly X", and forcing that into
+#: "active" would overstate it.
+CONDITION_STATUSES = ("active", "resolved", "historical", "uncertain")
+
+#: How a medication is taken (PRD 4, section 10).
+MEDICATION_FORMS = (
+    "tablet",
+    "capsule",
+    "liquid",
+    "injection",
+    "inhaler",
+    "cream",
+    "other",
+)
+
+#: What someone is allergic to (PRD 4, section 12).
+ALLERGY_TYPES = ("medication", "food", "environmental", "other")
+
+#: How bad a reaction is -- as the *user* described it. Nura never infers this
+#: (PRD 4, section 12).
+ALLERGY_SEVERITIES = ("mild", "moderate", "severe", "unknown")
+
+#: What a medical note is for (PRD 4, section 16).
+MEDICAL_NOTE_CATEGORIES = (
+    "general",
+    "important",
+    "accessibility",
+    "care_instruction",
+    "other",
+)
+
+#: Blood groups, plus the two answers that are not a group (PRD 4, section 15).
+#: "I don't know" and "I'd rather not say" are real answers, and storing them
+#: is better than leaving the field empty and guessing which was meant.
+BLOOD_TYPES = (
+    "A+",
+    "A-",
+    "B+",
+    "B-",
+    "AB+",
+    "AB-",
+    "O+",
+    "O-",
+    "unknown",
+    "prefer_not_to_say",
+)
+
+#: Progress through the gradual health setup (PRD 4, section 18). Unlike the
+#: onboarding state machine, this one is not a gate: nothing in the app is
+#: blocked by an incomplete health profile.
+HEALTH_PROFILE_STATUSES = ("not_started", "in_progress", "complete")
+
+#: The sections of the health profile, in the order setup offers them
+#: (PRD 4, sections 7 and 17). Used for the resume point and for the
+#: completeness figure, so the two can never disagree about what counts.
+HEALTH_SECTIONS = (
+    "conditions",
+    "medications",
+    "allergies",
+    "clinicians",
+    "procedures",
+    "blood_type",
+    "medical_notes",
+)
+
 #: Appearance options, already established in PRD 0.
 THEMES = ("system", "light", "dark")
 

@@ -20,6 +20,9 @@ Usage, from the ``backend`` directory with the virtualenv active::
     python -m scripts.seed_dev --account latest --device none
     python -m scripts.seed_dev --account you@example.com --checkin okay
     python -m scripts.seed_dev --account latest --checkin none
+    python -m scripts.seed_dev --account latest --health partial
+    python -m scripts.seed_dev --account latest --health complete
+    python -m scripts.seed_dev --account latest --health empty
 
 ``--account`` takes an email, a phone number, an auth provider subject, or
 ``latest`` for the most recently created account -- which during development is
@@ -31,13 +34,27 @@ import secrets
 import sys
 import time
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
-from app.models import DailyCheckIn, Device, User
+from app.models import (
+    Allergy,
+    Clinician,
+    DailyCheckIn,
+    Device,
+    HealthRecord,
+    MedicalCondition,
+    MedicalNote,
+    Medication,
+    Procedure,
+    Profile,
+    User,
+)
 from app.services import checkins as checkin_service
+from app.services import health as health_service
 from app.services import profiles as profile_service
 from app.services.devices import ONLINE_THRESHOLD, hash_secret
 
@@ -224,6 +241,103 @@ def set_checkin(db: Session, user: User, level: str, note: str | None) -> None:
     print(f"today's check-in for {profile.preferred_name} is now: {level}.")
 
 
+#: Made-up records for a development account. Ordinary, unremarkable entries
+#: on purpose: fixture data that looks alarming has a way of ending up in a
+#: screenshot (PRD 4, section 53).
+#: Model -> the rows to create for it.
+HealthFixture = dict[type[HealthRecord], list[dict[str, Any]]]
+
+PARTIAL_HEALTH: HealthFixture = {
+    MedicalCondition: [
+        {"name": "Asthma", "status": "active", "diagnosed_year": 2015},
+        {"name": "Ankle sprain", "status": "resolved", "diagnosed_year": 2021},
+    ],
+    Medication: [
+        {
+            "name": "Salbutamol",
+            "dose": "100",
+            "dose_unit": "mcg",
+            "form": "inhaler",
+            "frequency_text": "two puffs when needed",
+            "is_active": True,
+        },
+    ],
+    Clinician: [{"name": "Dr Okafor", "specialty": "General practice"}],
+}
+
+COMPLETE_HEALTH: HealthFixture = {
+    **PARTIAL_HEALTH,
+    Medication: [
+        *PARTIAL_HEALTH[Medication],
+        {
+            "name": "Amoxicillin",
+            "dose": "500",
+            "dose_unit": "mg",
+            "form": "capsule",
+            "frequency_text": "three times a day",
+            "is_active": False,
+        },
+    ],
+    Allergy: [
+        {
+            "allergen": "Penicillin",
+            "allergy_type": "medication",
+            "reaction": "Rash",
+            "severity": "moderate",
+        }
+    ],
+    Procedure: [{"name": "Appendectomy", "performed_year": 2009}],
+    MedicalNote: [
+        {
+            "title": "Mobility",
+            "body": "Uses a walking stick outdoors.",
+            "category": "accessibility",
+        }
+    ],
+}
+
+
+def _clear_health(db: Session, profile: Profile) -> None:
+    for model in health_service.SECTION_MODELS.values():
+        for record in health_service.list_records(db, model, profile.id):
+            db.delete(record)
+    profile.blood_type = None
+    profile.health_profile_status = "not_started"
+    profile.health_profile_step = None
+    db.commit()
+
+
+def set_health(db: Session, user: User, preset: str) -> None:
+    """Replaces the health profile with one of the three development shapes."""
+    profile = profile_service.primary_profile(user)
+    if profile is None:
+        fail("this account has no profile yet, so there is nobody to be about.")
+    assert profile is not None
+
+    _clear_health(db, profile)
+
+    if preset == "empty":
+        print(f"cleared {profile.preferred_name}'s health profile.")
+        return
+
+    records = PARTIAL_HEALTH if preset == "partial" else COMPLETE_HEALTH
+    for model, entries in records.items():
+        for fields in entries:
+            db.add(model(profile_id=profile.id, **fields))
+
+    profile.health_profile_status = "in_progress" if preset == "partial" else "complete"
+    profile.health_profile_step = "allergies" if preset == "partial" else None
+    if preset == "complete":
+        profile.blood_type = "O+"
+    db.commit()
+
+    summary = health_service.build_summary(db, profile)
+    print(
+        f"{profile.preferred_name}'s health profile is now {preset}: "
+        f"{summary.percent}% complete."
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Seed development data for the Today screen. Never for production."
@@ -256,6 +370,11 @@ def main() -> None:
         help="set or clear today's check-in",
     )
     parser.add_argument("--note", help="optional note to store with --checkin")
+    parser.add_argument(
+        "--health",
+        choices=["empty", "partial", "complete"],
+        help="replace the health profile with a development fixture",
+    )
     args = parser.parse_args()
 
     db = open_session()
@@ -279,11 +398,13 @@ def main() -> None:
             set_device(db, user, args.device, args.minutes_ago)
         if args.checkin:
             set_checkin(db, user, args.checkin, args.note)
+        if args.health:
+            set_health(db, user, args.health)
         if args.keep_online:
             keep_online(db, user, args.keep_online)
 
-        if not (args.device or args.checkin or args.keep_online):
-            print("nothing to do -- pass --device and/or --checkin.")
+        if not (args.device or args.checkin or args.keep_online or args.health):
+            print("nothing to do -- pass --device, --checkin and/or --health.")
     finally:
         db.close()
 

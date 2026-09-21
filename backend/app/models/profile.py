@@ -18,7 +18,14 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
-from app.models.enums import AGE_RANGES, PROFILE_ROLES, sql_in_list
+from app.models.enums import (
+    AGE_RANGES,
+    BLOOD_TYPES,
+    HEALTH_PROFILE_STATUSES,
+    HEALTH_SECTIONS,
+    PROFILE_ROLES,
+    sql_in_list,
+)
 
 if TYPE_CHECKING:
     from app.models.user import User
@@ -37,6 +44,19 @@ class Profile(Base, TimestampMixin):
         CheckConstraint(
             f"age_range IS NULL OR age_range IN {sql_in_list(AGE_RANGES)}",
             name="ck_profiles_age_range",
+        ),
+        CheckConstraint(
+            f"blood_type IS NULL OR blood_type IN {sql_in_list(BLOOD_TYPES)}",
+            name="ck_profiles_blood_type",
+        ),
+        CheckConstraint(
+            f"health_profile_status IN {sql_in_list(HEALTH_PROFILE_STATUSES)}",
+            name="ck_profiles_health_profile_status",
+        ),
+        CheckConstraint(
+            "health_profile_step IS NULL OR health_profile_step IN "
+            f"{sql_in_list(HEALTH_SECTIONS)}",
+            name="ck_profiles_health_profile_step",
         ),
     )
 
@@ -58,6 +78,24 @@ class Profile(Base, TimestampMixin):
     #: Reserved for the optional profile photo. No upload UI in PRD 1; see
     #: docs/architecture/system-overview.md for why.
     avatar_url: Mapped[str | None] = mapped_column(String(512))
+
+    # --- the health profile (PRD 4, sections 15 and 18) ---
+    # These three live on the profile rather than in a health table because
+    # each is a single value about the person, not a record they keep a list
+    # of. They are still medical data: they are reachable only through the
+    # health routes, and `/me` does not return them.
+    #
+    #: A blood group, or one of the two answers that are not one: `unknown`
+    #: ("I don't know") and `prefer_not_to_say`. Never inferred.
+    blood_type: Mapped[str | None] = mapped_column(String(20))
+    #: How far through the gradual health setup this person is. Unlike
+    #: `onboarding_status` this gates nothing -- an empty health profile is a
+    #: perfectly usable app (PRD 4, section 17).
+    health_profile_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="not_started"
+    )
+    #: Which section to resume at, or null. One of `HEALTH_SECTIONS`.
+    health_profile_step: Mapped[str | None] = mapped_column(String(20))
 
     account_roles: Mapped[list["AccountProfileRole"]] = relationship(
         back_populates="profile", cascade="all, delete-orphan"

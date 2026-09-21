@@ -10,6 +10,8 @@ from app.api.v1 import (
     checkins,
     dashboard,
     devices,
+    health,
+    health_records,
     me,
     onboarding,
     profiles,
@@ -37,3 +39,5 @@ router.include_router(devices.router)
 router.include_router(today.router)
 router.include_router(checkins.router)
 router.include_router(dashboard.router)
+router.include_router(health.router)
+router.include_router(health_records.router)

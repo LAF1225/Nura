@@ -11,6 +11,7 @@ signature we checked.
 """
 
 import logging
+import uuid
 from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Annotated
@@ -30,9 +31,10 @@ from app.core.security import (
     TokenVerifier,
 )
 from app.db.session import get_db
-from app.models import Device, User, UserSettings
+from app.models import Device, Profile, User, UserSettings
 from app.services.devices import hash_secret
 from app.services.errors import DomainError
+from app.services.profiles import resolve_profile
 
 logger = logging.getLogger(__name__)
 
@@ -208,3 +210,21 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentDevice = Annotated[Device, Depends(get_current_device)]
 DbSession = Annotated[Session, Depends(get_db)]
 Now = Annotated[datetime, Depends(current_time)]
+
+
+def get_owned_profile(profile_id: uuid.UUID, user: CurrentUser) -> Profile:
+    """The profile named in the path, if the caller may see it (PRD 4, s25).
+
+    Every profile-scoped route depends on this, so the rule -- a profile is
+    reachable only through the signed-in account's own join row -- is applied
+    in one place rather than repeated per endpoint. A profile that exists but
+    belongs to someone else is answered with 404, so an id is never confirmed
+    to exist.
+    """
+    try:
+        return resolve_profile(user, profile_id)
+    except DomainError as error:
+        raise http_error(error) from error
+
+
+OwnedProfile = Annotated[Profile, Depends(get_owned_profile)]

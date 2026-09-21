@@ -49,14 +49,17 @@ lives. The backend is the only component trusted with authorisation.
 | Today          | Greeting, daily wellbeing check-in, Important Today, configurable cards, robot status — none of it needs a robot |
 | Check-ins      | One per person per local day, editable, queued on the device when offline |
 | Dashboard      | Cards resolved from a server registry; show, hide and reorder from Customize Today |
-| Database       | `users`, `user_settings`, `profiles`, `account_profile_roles`, `devices`, `provisioning_sessions`, `daily_checkins`, `dashboard_preferences` |
-| Endpoints      | `/health`, `/api/v1/version`, `/api/v1/me`, `/api/v1/onboarding`, `/api/v1/profiles`, `/api/v1/devices`, `/api/v1/today`, `/api/v1/daily-checkins`, `/api/v1/dashboard-preferences` |
+| Health record  | Conditions, medications, allergies, doctors, procedures, notes and blood type — full CRUD, owned by a profile |
+| Health setup   | Gradual, resumable, skippable; an equal-weight completeness figure that blocks nothing |
+| Database       | `users`, `user_settings`, `profiles`, `account_profile_roles`, `devices`, `provisioning_sessions`, `daily_checkins`, `dashboard_preferences`, `medical_conditions`, `medications`, `allergies`, `clinicians`, `procedures`, `medical_notes` |
+| Endpoints      | `/health`, `/api/v1/version`, `/api/v1/me`, `/api/v1/onboarding`, `/api/v1/profiles`, `/api/v1/devices`, `/api/v1/today`, `/api/v1/daily-checkins`, `/api/v1/dashboard-preferences`, and the health record under `/api/v1/profiles/{id}/…` |
 
-Deliberately absent: symptom and medication tracking, appointments, AI or
-chat, caregiver permissions, emergency detection, push notifications,
-HealthKit and Health Connect. The daily check-in is a wellbeing prompt with
-three answers and an optional note — it is not symptom tracking, and nothing
-in the system interprets it.
+Deliberately absent: medication *scheduling* and reminders, symptom logging,
+appointments, AI or chat, caregiver permissions, emergency detection, push
+notifications, HealthKit and Health Connect. The daily check-in is a wellbeing
+prompt with three answers and an optional note -- it is not symptom tracking.
+The health record stores medications but attaches no schedule to them, and
+nothing in the system interprets any of it.
 
 ### How a robot joins an account
 
@@ -100,10 +103,12 @@ mobile/
 │   ├── (tabs)/               The five primary sections
 │   ├── appearance.tsx        More → Appearance
 │   ├── customize-today.tsx   More → Customize Today
+│   ├── health/               The health record: setup, sections, forms
 │   └── +not-found.tsx
 └── src/
     ├── components/           Screen, Card, Button, AppText, List, …
     │   └── today/            Today cards and the card registry
+    ├── features/health/      Section specs, form logic, API, hooks, drafts
     ├── constants/            Runtime config; the only reader of process.env
     ├── hooks/                useToday, useDevices, network status, …
     ├── navigation/           Tab definitions (single source of tab order)
@@ -181,7 +186,7 @@ backend/
 │   │   └── v1/router.py      Everything under /api/v1
 │   ├── core/                 Settings and logging
 │   ├── db/                   Engine, session, declarative base
-│   ├── models/               User, Profile, Device, DailyCheckIn, …
+│   ├── models/               User, Profile, Device, DailyCheckIn, health, …
 │   ├── schemas/              Pydantic request/response models
 │   ├── services/             The rules: onboarding, devices, check-ins, cards
 │   └── main.py
@@ -244,6 +249,16 @@ provisioning_sessions  (one robot may join one account, briefly)
   hardware_id indexed         device_id    → devices (set null)
   created_at, updated_at
 
+The health record -- six tables, all owned by a profile and all cascading
+with it -- is described in [health-data.md](health-data.md) rather than
+repeated here.
+
+```text
+medical_conditions   medications   allergies
+clinicians           procedures    medical_notes
+```
+
+```text
 daily_checkins  (how one person said they were   dashboard_preferences
                  feeling on one day)               id          uuid, pk
   id              uuid, pk                         profile_id  → profiles (cascade)
@@ -254,6 +269,11 @@ daily_checkins  (how one person said they were   dashboard_preferences
   unique (profile_id, checkin_date)                created_at, updated_at
   created_at, updated_at
 ```
+
+`profiles` also gained `blood_type` and the two columns that remember where
+someone got to in health setup -- each a single answer about the person rather
+than a list they keep. They are medical data all the same: only the health
+routes return them, and `/me` does not.
 
 A check-in belongs to a **profile**, not to the account that submitted it: in
 assisted setup those differ, and it is the person Nura is for whose day is
@@ -370,6 +390,44 @@ today_card_hidden         today_card_reordered      connect_nura_selected
 A check-in *level* may be counted. A note, a preferred name, a device
 credential or an auth token may never be sent anywhere.
 
+## The health record
+
+Six record types, one shape. Everything belongs to a **profile** rather than
+to the account that typed it in, because in assisted setup those are different
+people and getting it wrong once would be hard to unpick.
+
+Three decisions run through it, and each is there to stop the system saying
+something the user did not:
+
+**Dates keep their precision.** An approximate date is two columns -- an exact
+date and a year -- with a constraint that at most one is set. "Diagnosed in
+2015" stays a year, and "I don't remember" stays nothing at all.
+
+**Provenance is the server's to set.** `source` says where a record came from.
+A client cannot supply it, so nothing can claim to have come from a clinician
+import when a person typed it in.
+
+**Nothing is interpreted.** Severity is what the user chose, not what the
+reaction text suggests. "Currently taking" is a flag they set, not something
+derived from an end date. No condition is suggested from typed text, no
+interaction is computed, and no record change notifies anybody.
+
+The authorization rule, the privacy rules and what later PRDs will need are in
+[health-data.md](health-data.md).
+
+### One screen for six record types
+
+The app describes each section once -- its fields, its wording, how to
+summarise a record -- and the list and form screens read that description.
+Six near-identical CRUD screens written by hand would be six chances for a
+delete confirmation, an empty state or a required-field message to drift
+apart, on the part of the app that holds someone's medical history.
+
+The backend does the opposite and writes its routes out per resource. That is
+deliberate too: it is the authorization surface for medical records, and being
+able to read each resource's four routes in full is worth more there than
+brevity.
+
 ## Security posture
 
 These hold now and constrain every later PRD:
@@ -441,7 +499,13 @@ Acceptable future phrasing describes and defers:
   professional."
 - "Nura noticed unusual movement." — never "Nura detected a seizure."
 
-The daily check-in is the first place this bites. A `not_great` answer is
+The health record is where this is most concrete. Nura stores what people tell
+it and says so on the screens that show it: nothing is described as confirmed,
+verified or checked. It does not infer a severity from a reaction, suggest a
+condition from typed text, compute an interaction, or tell anyone to start,
+stop or change a medication. PRD 4 stores and displays; it does not advise.
+
+The daily check-in is the other place this bites. A `not_great` answer is
 acknowledged -- "Thanks for checking in." -- and nothing more. It does not
 suggest a cause, does not recommend an action, does not raise an alert, and
 does not notify anybody. A test asserts the wording carries no such language.

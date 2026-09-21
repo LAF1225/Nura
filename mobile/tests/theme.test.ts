@@ -129,6 +129,13 @@ describe('Today components take their colours from the theme', () => {
     'src/components/today/OfflineBanner.tsx',
     'src/components/today/QuickActionsCard.tsx',
     'src/components/today/registry.tsx',
+    'app/health/setup.tsx',
+    'app/health/blood-type.tsx',
+    'app/health/[section]/index.tsx',
+    'app/health/[section]/[id].tsx',
+    'src/features/health/components/RecordForm.tsx',
+    'src/features/health/components/Completeness.tsx',
+    'src/features/health/components/HealthProfileCard.tsx',
   ];
 
   it.each(FILES)('%s contains no hard-coded colour', (file) => {

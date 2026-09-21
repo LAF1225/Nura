@@ -21,6 +21,7 @@ import type {
   TodayDevice,
   WellbeingLevel,
 } from '../../types/today';
+import { HealthProfileCard } from '../../features/health/components/HealthProfileCard';
 import { DailyCheckInCard } from './DailyCheckInCard';
 import { NuraStatusCard } from './NuraStatusCard';
 import { QuickActionsCard } from './QuickActionsCard';
@@ -56,6 +57,10 @@ export const CARD_RENDERERS: Partial<Record<DashboardCardKey, CardRenderer>> = {
     />
   ),
   quick_actions: (context) => <QuickActionsCard device={context.device} />,
+  // Reads its own summary rather than being handed one: Today should not pay
+  // for a health request when the card is hidden, which it is by default
+  // (PRD 4, section 47).
+  health_profile: () => <HealthProfileCard />,
 };
 
 /** Keys this build can draw. Used to filter whatever the server sends. */

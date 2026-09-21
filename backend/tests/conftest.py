@@ -74,7 +74,9 @@ def engine() -> Iterator[sa.Engine]:
     with test_engine.begin() as connection:
         connection.execute(
             sa.text(
-                "TRUNCATE daily_checkins, dashboard_preferences, "
+                "TRUNCATE medical_conditions, medications, allergies, "
+                "clinicians, procedures, medical_notes, "
+                "daily_checkins, dashboard_preferences, "
                 "provisioning_sessions, account_profile_roles, profiles, "
                 "user_settings, devices, users RESTART IDENTITY CASCADE"
             )

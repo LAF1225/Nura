@@ -102,6 +102,11 @@ interface BackendState {
   cards?: CardState[];
   /** Status code to answer `/api/v1/today` with, for error-state tests. */
   todayStatus?: number;
+  /** Health records, keyed by the API path segment ("conditions", …). */
+  healthRecords?: Record<string, Record<string, unknown>[]>;
+  healthSetup?: { status: string; step: string | null; blood_type: string | null };
+  /** Status code to answer the health endpoints with. */
+  healthStatus?: number;
 }
 
 /** Records what the stubbed backend was asked to do, for assertions. */
@@ -146,6 +151,13 @@ export function mockBackend(initial: BackendState = {}): BackendStub {
       checkIn: initial.checkIn ?? null,
       cards: initial.cards ?? DEFAULT_CARDS.map((card) => ({ ...card })),
       todayStatus: initial.todayStatus ?? 200,
+      healthRecords: initial.healthRecords ?? {},
+      healthSetup: initial.healthSetup ?? {
+        status: 'not_started',
+        step: null,
+        blood_type: null,
+      },
+      healthStatus: initial.healthStatus ?? 200,
     },
     restore: () => {
       globalThis.fetch = originalFetch;
@@ -209,6 +221,65 @@ export function mockBackend(initial: BackendState = {}): BackendStub {
     important: [],
   });
 
+  /** Section key -> API path segment. Only notes differ. */
+  const HEALTH_SECTIONS: { key: string; path: string; title: string }[] = [
+    { key: 'conditions', path: 'conditions', title: 'Conditions' },
+    { key: 'medications', path: 'medications', title: 'Medications' },
+    { key: 'allergies', path: 'allergies', title: 'Allergies' },
+    { key: 'clinicians', path: 'clinicians', title: 'Doctors' },
+    { key: 'procedures', path: 'procedures', title: 'Surgeries & procedures' },
+    { key: 'blood_type', path: '', title: 'Blood type' },
+    { key: 'medical_notes', path: 'medical-notes', title: 'Medical notes' },
+  ];
+
+  const recordsFor = (segment: string) => stub.state.healthRecords[segment] ?? [];
+
+  /** Built the same way the backend builds it: counts, and nothing else. */
+  const healthSummaryBody = () => {
+    const sections = HEALTH_SECTIONS.map((section) => {
+      if (section.key === 'blood_type') {
+        const set = stub.state.healthSetup.blood_type !== null;
+        return { ...section, count: set ? 1 : 0, complete: set, updated_at: null };
+      }
+      const count = recordsFor(section.path).length;
+      return {
+        key: section.key,
+        title: section.title,
+        count,
+        complete: count > 0,
+        updated_at: count > 0 ? '2026-09-21T08:00:00Z' : null,
+      };
+    });
+    const completed = sections.filter((section) => section.complete).length;
+    return {
+      profile_id: 'profile-1',
+      status: stub.state.healthSetup.status,
+      step: stub.state.healthSetup.step,
+      blood_type: stub.state.healthSetup.blood_type,
+      sections: sections.map(({ key, title, count, complete, updated_at }) => ({
+        key,
+        title,
+        count,
+        complete,
+        updated_at,
+      })),
+      completed_sections: completed,
+      total_sections: sections.length,
+      percent: Math.floor((completed * 100) / sections.length),
+      active_conditions: recordsFor('conditions').filter(
+        (item) => item.status === 'active'
+      ).length,
+      active_medications: recordsFor('medications').filter(
+        (item) => item.is_active !== false
+      ).length,
+    };
+  };
+
+  const healthSetupBody = () => ({
+    profile_id: 'profile-1',
+    ...stub.state.healthSetup,
+  });
+
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     // Strip the origin. `indexOf` returns -1 for non-API routes such as
@@ -230,6 +301,69 @@ export function mockBackend(initial: BackendState = {}): BackendStub {
         if (body.status !== undefined) stub.state.status = body.status;
       }
       return jsonResponse(onboardingBody());
+    }
+
+    const healthMatch =
+      /^\/api\/v1\/profiles\/[^/]+\/(health-summary|health-setup|conditions|medications|allergies|clinicians|procedures|medical-notes)(\/([^/?]+))?/.exec(
+        path
+      );
+    if (healthMatch) {
+      if (stub.state.healthStatus !== 200) {
+        return jsonResponse({ detail: { code: 'unavailable' } }, stub.state.healthStatus);
+      }
+
+      const resource = healthMatch[1] ?? '';
+      const recordId = healthMatch[3];
+
+      if (resource === 'health-summary') {
+        return jsonResponse(healthSummaryBody());
+      }
+
+      if (resource === 'health-setup') {
+        if (method === 'PATCH' && body) {
+          if (body.status !== undefined) stub.state.healthSetup.status = body.status;
+          if ('step' in body) stub.state.healthSetup.step = body.step;
+          if ('blood_type' in body) {
+            stub.state.healthSetup.blood_type = body.blood_type;
+          }
+        }
+        return jsonResponse(healthSetupBody());
+      }
+
+      const existing = recordsFor(resource);
+
+      if (method === 'POST') {
+        const created = {
+          ...body,
+          id: `${resource}-${existing.length + 1}`,
+          profile_id: 'profile-1',
+          source: 'user',
+          created_at: '2026-09-21T08:00:00Z',
+          updated_at: '2026-09-21T08:00:00Z',
+        };
+        stub.state.healthRecords[resource] = [created, ...existing];
+        return jsonResponse(created, 201);
+      }
+
+      if (method === 'PATCH' && recordId) {
+        stub.state.healthRecords[resource] = existing.map(
+          (item: Record<string, unknown>) =>
+            item.id === recordId ? { ...item, ...body } : item
+        );
+        const updated = (stub.state.healthRecords[resource] ?? []).find(
+          (item: Record<string, unknown>) => item.id === recordId
+        );
+        return jsonResponse(updated ?? {});
+      }
+
+      if (method === 'DELETE' && recordId) {
+        stub.state.healthRecords[resource] = existing.filter(
+          (item: Record<string, unknown>) => item.id !== recordId
+        );
+        return jsonResponse(null, 204);
+      }
+
+      return jsonResponse(existing);
     }
 
     if (path.startsWith('/api/v1/profiles')) {

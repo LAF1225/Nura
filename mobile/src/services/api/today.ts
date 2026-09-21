@@ -31,6 +31,7 @@ const CARD_KEYS: readonly DashboardCardKey[] = [
   'daily_checkin',
   'device_status',
   'quick_actions',
+  'health_profile',
   'medications',
   'appointments',
   'symptoms',

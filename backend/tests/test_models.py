@@ -8,9 +8,15 @@ required.
 from app.db.base import Base
 from app.models import (
     AccountProfileRole,
+    Allergy,
+    Clinician,
     DailyCheckIn,
     DashboardPreference,
     Device,
+    MedicalCondition,
+    MedicalNote,
+    Medication,
+    Procedure,
     Profile,
     ProvisioningSession,
     User,
@@ -28,6 +34,12 @@ def test_table_set_matches_the_prds() -> None:
         "provisioning_sessions",
         "daily_checkins",
         "dashboard_preferences",
+        "medical_conditions",
+        "medications",
+        "allergies",
+        "clinicians",
+        "procedures",
+        "medical_notes",
     }
 
 
@@ -64,8 +76,14 @@ def test_settings_columns_include_accessibility_preferences() -> None:
     }
 
 
-def test_profile_holds_no_medical_information() -> None:
-    """PRD 1, section 50: none of this belongs in PRD 1."""
+def test_profile_holds_only_the_health_values_that_are_single_answers() -> None:
+    """PRD 4, sections 15 and 18.
+
+    A profile carries the three health values that are *one answer about the
+    person* -- their blood type and where they got to in setup. Everything
+    people keep a list of belongs in its own table, so this guards against the
+    profile quietly becoming the medical record.
+    """
     columns = set(Profile.__table__.columns.keys())
     assert columns == {
         "id",
@@ -74,6 +92,9 @@ def test_profile_holds_no_medical_information() -> None:
         "country_region",
         "pronouns",
         "avatar_url",
+        "blood_type",
+        "health_profile_status",
+        "health_profile_step",
         "created_at",
         "updated_at",
     }
@@ -187,3 +208,60 @@ def test_dashboard_preference_is_one_row_per_card() -> None:
         "created_at",
         "updated_at",
     }
+
+
+def test_every_health_record_belongs_to_a_profile() -> None:
+    """PRD 4, section 8: never to the account that typed it in."""
+    for model in (
+        MedicalCondition,
+        Medication,
+        Allergy,
+        Clinician,
+        Procedure,
+        MedicalNote,
+    ):
+        columns = set(model.__table__.columns.keys())
+        assert "profile_id" in columns, model.__tablename__
+        assert "user_id" not in columns, model.__tablename__
+        assert "account_id" not in columns, model.__tablename__
+        # Every one cascades with the profile, so removing a person removes
+        # their record rather than orphaning it.
+        foreign_key = next(iter(model.__table__.columns["profile_id"].foreign_keys))
+        assert foreign_key.ondelete == "CASCADE", model.__tablename__
+
+
+def test_approximate_dates_keep_their_precision() -> None:
+    """PRD 4, section 31: a year is a year, not the 1st of January."""
+    assert {"diagnosed_date", "diagnosed_year"} <= set(
+        MedicalCondition.__table__.columns.keys()
+    )
+    assert {"performed_date", "performed_year"} <= set(Procedure.__table__.columns.keys())
+
+    for model, prefix in ((MedicalCondition, "diagnosed"), (Procedure, "performed")):
+        checks = {
+            constraint.name
+            for constraint in model.__table__.constraints
+            if constraint.__class__.__name__ == "CheckConstraint"
+        }
+        assert f"ck_{model.__tablename__}_{prefix}_precision" in checks
+
+
+def test_medication_records_carry_no_schedule() -> None:
+    """PRD 4, sections 10 and 56: PRD 4 stores records, PRD 5 makes them act."""
+    columns = set(Medication.__table__.columns.keys())
+    forbidden = {
+        "reminder_time",
+        "reminder_times",
+        "schedule",
+        "taken_at",
+        "adherence",
+        "refill_date",
+        "snoozed_until",
+    }
+    assert columns & forbidden == set()
+
+
+def test_records_that_can_be_imported_later_record_where_they_came_from() -> None:
+    """PRD 4, section 32."""
+    for model in (MedicalCondition, Medication, Allergy):
+        assert "source" in model.__table__.columns, model.__tablename__

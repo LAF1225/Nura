@@ -3,15 +3,17 @@
 Nura is a desktop health companion: a small robot built around a Seeed Studio
 XIAO ESP32-S3, a cross-platform mobile app, and a backend service.
 
-This repository is at **PRD 3 — Core App Shell, Today Dashboard & Daily
-Check-In**. It is the beginning of a real everyday app rather than a setup
-utility: a branded five-tab app with Light/Dark/System themes, account creation
-and onboarding, a Today screen with a daily wellbeing check-in and configurable
-cards, a FastAPI backend, and the firmware and app flow for connecting a robot.
+This repository is at **PRD 4 — Medical Profile & Health Record Foundation**.
+It is a real everyday app rather than a setup utility: a branded five-tab app
+with Light/Dark/System themes, account creation and onboarding, a Today screen
+with a daily wellbeing check-in and configurable cards, a structured health
+record, a FastAPI backend, and the firmware and app flow for connecting a
+robot.
 
-> **Nothing in PRD 3 needs the robot.** Today works with no robot linked, with
-> one that is offline, and with one the backend has heard from — and a seeding
-> script reaches all three states without hardware. See section 8.
+> **Nothing in PRD 3 or PRD 4 needs the robot.** Today works with no robot
+> linked, with one that is offline, and with one the backend has heard from —
+> and a seeding script reaches all three states without hardware. The entire
+> health record works with no robot at all. See sections 8 and 9.
 
 > **The robot has not been built yet.** The pairing flow, the firmware and the
 > backend are written and tested as far as software allows — the cryptography
@@ -385,7 +387,65 @@ the app: there is no "pretend the robot is online" button anywhere in the UI.
 The seeded device uses the hardware id `NURA-DEADBEEF0001`, which is not a real
 MAC address, so it can never collide with a board you later build.
 
-## 9. Run the tests
+## 9. The health record
+
+Health holds what someone tells Nura about their health: conditions,
+medications, allergies, doctors, surgeries and procedures, medical notes and
+blood type. **None of it needs the robot** — no health endpoint touches the
+device tables, and no health data is ever sent over BLE.
+
+It is built to be filled in gradually. Only a name is ever required, setup can
+be stopped at any point and resumed, and a partly-filled profile is a normal
+state rather than a warning. The completeness figure is informational and
+blocks nothing.
+
+### Dates people only half remember
+
+A condition diagnosed "in 2015" is stored as a year, not as the 1st of January
+2015. Each approximate date is a date *or* a year, never both, and "I don't
+remember" stays exactly that. The form asks which kind of answer someone has.
+
+### What Nura does not do with it
+
+It does not check, verify or confirm anything; every record is what a person
+said, and the screens say so. It does not infer severity from a reaction, work
+out whether a medication is current from its end date, suggest a condition
+from typed text, compute an interaction risk, or tell anyone to start, stop or
+change a medication. PRD 4 stores and displays.
+
+Record values are never logged: health logs name the resource and the action
+and stop. See
+[docs/architecture/health-data.md](docs/architecture/health-data.md).
+
+### Seeing it filled in without typing it all
+
+From `backend/`, with the virtualenv active:
+
+```bash
+python -m scripts.seed_dev --account latest --health partial
+```
+
+```bash
+python -m scripts.seed_dev --account latest --health complete
+```
+
+```bash
+python -m scripts.seed_dev --account latest --health empty
+```
+
+`partial` leaves the profile part-way through setup with a resume point;
+`complete` fills every section including blood type; `empty` clears it back to
+nothing. As with the device fixtures, the script refuses to run unless
+`APP_ENV=development` and nothing in the app can reach it.
+
+### The optional Today card
+
+PRD 4 registers a **Health profile** card for Today. It is **off by default**:
+the Health tab is where people look for this, and Today stays calm unless
+asked. Turn it on in **More → Customize Today**. It shows a percentage and a
+way in, never a condition or medication name.
+
+## 10. Run the tests
 
 Mobile:
 
@@ -413,8 +473,8 @@ drives a check-in against a stubbed backend, covers the pairing flow end to end
 against a simulated robot that runs the real protocol, and checks the app's
 cryptography against RFC 9382's test vectors. One test parses the firmware's
 `protocol.h` and fails if the app and the robot disagree about any UUID,
-message type or status code; another reads the Today components and fails if a
-colour has been written into one instead of coming from the theme.
+message type or status code; another reads the Today and Health components and
+fails if a colour has been written into one instead of coming from the theme.
 
 The backend suite **does need PostgreSQL running**. It creates a separate
 `nura_test` database on first run, applies the real migrations to it, and rolls
@@ -424,7 +484,7 @@ suite needs a Supabase project or a network connection: tokens are signed with
 a key pair generated inside the test run and verified by the real production
 verifier.
 
-## 10. Code quality
+## 11. Code quality
 
 ```bash
 cd mobile
@@ -488,6 +548,8 @@ string from the Supabase dashboard into `backend/.env` and run
 | `mobile/src/components/today/` | Today cards and the card registry            |
 | `mobile/src/services/checkins/` | The offline check-in queue                  |
 | `mobile/src/services/today/` | The saved copy of the last Today response       |
+| `mobile/src/features/health/` | Health section specs, form logic, API, drafts  |
+| `mobile/app/health/`      | Health setup, sections and record forms         |
 | `backend/scripts/`        | Development fixtures (never for production)     |
 | `backend/app/api/`        | HTTP routes (`/health`, `/api/v1/*`)            |
 | `backend/app/models/`     | SQLAlchemy models                               |
@@ -499,6 +561,8 @@ string from the Supabase dashboard into `backend/.env` and run
 ## Documentation
 
 - [System overview](docs/architecture/system-overview.md)
+- [Health data](docs/architecture/health-data.md) — who health records belong
+  to, the authorization rule, and the privacy rules
 - [Safety and emergency architecture](docs/architecture/safety-and-emergency.md)
 - [API reference](docs/api/README.md)
 - [Provisioning protocol](docs/device/provisioning-protocol.md) — UUIDs,
@@ -510,7 +574,8 @@ string from the Supabase dashboard into `backend/.env` and run
   [Device connectivity](docs/decisions/0003-device-connectivity.md),
   [Supabase Auth](docs/decisions/0004-supabase-auth.md),
   [BLE pairing](docs/decisions/0005-ble-pairing.md),
-  [Today and offline check-ins](docs/decisions/0006-today-and-offline-checkins.md)
+  [Today and offline check-ins](docs/decisions/0006-today-and-offline-checkins.md),
+  [Health record foundation](docs/decisions/0007-health-record-foundation.md)
 
 ## Known issues
 
@@ -535,6 +600,13 @@ asserted. The logic behind them — card visibility, ordering, the layout sent t
 the server, the greeting buckets, the local-date rule and the offline queue —
 is covered directly in `mobile/tests/`, and every server-side rule is covered
 against a real database in `backend/tests/`.
+
+The health forms are in the same position: what a form *means* — the defaults
+a new record starts with, what is refused, what is actually sent, and how a
+year-only date survives the round trip — is tested directly and thoroughly,
+while typing into a field and watching it re-render is not. The delete
+confirmation *is* asserted, because it goes through a native alert rather than
+local state.
 
 **Only email sign-in has been verified end to end.** Google, Apple and phone
 are implemented against the Supabase SDK and documented above, but marked

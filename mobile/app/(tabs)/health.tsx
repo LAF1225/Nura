@@ -1,43 +1,192 @@
 /**
- * Health -- still deliberately minimal (PRD 3, section 34).
+ * Health -- the overview of the health record (PRD 4, sections 5, 6 and 19).
  *
- * The timeline, conditions, measurements and reports arrive in PRD 4 and
- * later. All this shows now is the one health-adjacent thing that genuinely
- * exists: how many days this week have a check-in. A count, not a trend --
- * charts and correlations are ruled out until there is clinical care behind
- * them (PRD 3, section 12).
+ * Summary-oriented on purpose. This screen says what is in the profile and
+ * gives a way into each part; it never lists conditions or medications
+ * itself. That keeps the most-opened health screen calm, and keeps sensitive
+ * detail one deliberate tap away (PRD 4, sections 5 and 33).
+ *
+ * A partly-filled profile is a normal state, not a warning (section 19), and
+ * none of this needs a robot (section 38).
  */
-import { AppText, Card, Screen } from '../../src/components';
+import { useRouter } from 'expo-router';
+import { View } from 'react-native';
+
+import {
+  AppText,
+  Button,
+  Card,
+  ListGroup,
+  ListRow,
+  Screen,
+  SkeletonCard,
+} from '../../src/components';
+import { OfflineBanner } from '../../src/components/today';
+import { Completeness } from '../../src/features/health/components/Completeness';
+import { useHealthSummary } from '../../src/features/health/hooks';
+import { bloodTypeLabel, isRecordSection } from '../../src/features/health/sections';
+import type { HealthSectionSummary } from '../../src/features/health/types';
+import { useIsOffline } from '../../src/hooks/useNetworkStatus';
 import { useToday } from '../../src/hooks/useToday';
+import { apiErrorMessage } from '../../src/services/api';
 import { spacing } from '../../src/theme/tokens';
+import { timeAgo } from '../../src/utils/time';
+
+/** "3 added" / "Not added yet" / "O positive" -- never a record's contents. */
+function sectionValue(section: HealthSectionSummary, bloodType: string | null): string {
+  if (section.key === 'blood_type') {
+    return bloodTypeLabel(bloodType) ?? 'Not added yet';
+  }
+  if (section.count === 0) return 'Not added yet';
+  return section.count === 1 ? '1 added' : `${section.count} added`;
+}
+
+function sectionDescription(section: HealthSectionSummary): string | undefined {
+  if (section.key === 'blood_type' || section.updatedAt === null) return undefined;
+  return `Updated ${timeAgo(section.updatedAt)}`;
+}
 
 export default function HealthScreen() {
+  const router = useRouter();
+  const summary = useHealthSummary();
   const today = useToday();
-  const checkIn = today.data?.dailyCheckIn;
+  const isOffline = useIsOffline();
+  // PRD 3 section 34 put the weekly check-in count here, and it stays: it is
+  // the one health-adjacent thing that exists outside the medical record.
+  const checkIns = today.data?.dailyCheckIn.recentCompletedCount ?? 0;
+
+  const data = summary.data;
+  const started = data !== undefined && data.status !== 'not_started';
 
   return (
-    <Screen>
-      <AppText variant="title" style={{ marginBottom: spacing.md }}>
+    <Screen
+      onRefresh={() => void summary.refetch()}
+      refreshing={summary.isRefetching && !summary.isLoading}
+    >
+      <AppText variant="title" accessibilityRole="header">
         Health
       </AppText>
+      <AppText variant="body" tone="secondary" style={{ marginTop: spacing.xxs }}>
+        Everything here is what you have told Nura. Add as much or as little as you like.
+      </AppText>
 
-      {checkIn && checkIn.recentCompletedCount > 0 ? (
+      <View style={{ height: spacing.lg }} />
+
+      {isOffline ? <OfflineBanner /> : null}
+
+      {summary.isLoading ? (
+        <Card>
+          <SkeletonCard lines={4} label="Loading your health profile" />
+        </Card>
+      ) : summary.isError ? (
+        <Card style={{ gap: spacing.sm }}>
+          <AppText variant="heading">Nura can’t load your health profile</AppText>
+          <AppText variant="body" tone="secondary">
+            {apiErrorMessage(summary.error)}
+          </AppText>
+          <Button
+            label="Try again"
+            variant="secondary"
+            onPress={() => summary.refetch()}
+          />
+        </Card>
+      ) : data ? (
+        <View style={{ gap: spacing.lg }}>
+          <Card style={{ gap: spacing.sm }}>
+            {started ? (
+              <>
+                <AppText variant="heading">
+                  {data.status === 'complete'
+                    ? 'Your health profile'
+                    : 'Your profile is partly complete'}
+                </AppText>
+                <Completeness
+                  percent={data.percent}
+                  completedSections={data.completedSections}
+                  totalSections={data.totalSections}
+                />
+                <Button
+                  label={data.status === 'complete' ? 'Review setup' : 'Continue setup'}
+                  onPress={() => router.push('/health/setup')}
+                />
+              </>
+            ) : (
+              <>
+                <AppText variant="heading">Set up your health profile</AppText>
+                <AppText variant="body" tone="secondary">
+                  You can add your medical information now or complete it gradually. Nura
+                  will use only the information you choose to provide.
+                </AppText>
+                <Button
+                  label="Start health setup"
+                  onPress={() => router.push('/health/setup')}
+                />
+              </>
+            )}
+          </Card>
+
+          <View style={{ gap: spacing.xs }}>
+            <AppText variant="bodyStrong">What Nura knows</AppText>
+            <ListGroup>
+              {data.sections.map((section) => (
+                <ListRow
+                  key={section.key}
+                  label={section.title}
+                  description={sectionDescription(section)}
+                  value={sectionValue(section, data.bloodType)}
+                  showChevron
+                  onPress={() =>
+                    isRecordSection(section.key)
+                      ? router.push({
+                          pathname: '/health/[section]',
+                          params: { section: section.key },
+                        })
+                      : router.push('/health/blood-type')
+                  }
+                  accessibilityHint={`Opens ${section.title.toLowerCase()}`}
+                />
+              ))}
+            </ListGroup>
+          </View>
+
+          {data.activeConditions > 0 || data.activeMedications > 0 ? (
+            <Card style={{ gap: spacing.xxs }}>
+              <AppText variant="bodyStrong">Right now</AppText>
+              <AppText variant="body" tone="secondary">
+                {data.activeConditions === 1
+                  ? '1 ongoing condition'
+                  : `${data.activeConditions} ongoing conditions`}
+                {' · '}
+                {data.activeMedications === 1
+                  ? '1 medication you are taking'
+                  : `${data.activeMedications} medications you are taking`}
+              </AppText>
+            </Card>
+          ) : null}
+
+          {/* PRD 4, section 55: Nura stores what people tell it, and says so
+              rather than implying any of it has been checked. */}
+          <AppText variant="caption" tone="secondary">
+            Nura stores what you enter. Nothing here has been checked by a clinician.
+          </AppText>
+        </View>
+      ) : null}
+
+      <View style={{ height: spacing.lg }} />
+
+      {checkIns > 0 ? (
         <Card style={{ gap: spacing.xxs, marginBottom: spacing.md }}>
           <AppText variant="bodyStrong">This week</AppText>
           <AppText variant="body" tone="secondary">
-            {checkIn.recentCompletedCount === 1
-              ? '1 check-in completed'
-              : `${checkIn.recentCompletedCount} check-ins completed`}
+            {checkIns === 1 ? '1 check-in completed' : `${checkIns} check-ins completed`}
           </AppText>
         </Card>
       ) : null}
 
-      <Card style={{ gap: spacing.sm }}>
+      <Card style={{ gap: spacing.xs }}>
         <AppText variant="body" tone="secondary">
-          Your health timeline, conditions, measurements and reports will live here.
-        </AppText>
-        <AppText variant="caption" tone="secondary">
-          Nothing beyond your daily check-ins is being recorded yet.
+          Your health timeline, conditions over time, measurements and reports will live
+          here as Nura grows.
         </AppText>
       </Card>
     </Screen>

@@ -60,6 +60,13 @@ CARD_REGISTRY: tuple[CardDefinition, ...] = (
     CardDefinition(
         "quick_actions", "Quick actions", available=True, default_visible=False
     ),
+    # Real from PRD 4, and off by default: the Health tab is where someone
+    # looks for their health profile, and Today stays calm unless asked
+    # otherwise (PRD 3 section 3; PRD 4 section 47). It shows a percentage and
+    # never a condition or medication name.
+    CardDefinition(
+        "health_profile", "Health profile", available=True, default_visible=False
+    ),
     # Reserved for later PRDs. No renderer, no data, never shown.
     CardDefinition("medications", "Medications", available=False, default_visible=False),
     CardDefinition(

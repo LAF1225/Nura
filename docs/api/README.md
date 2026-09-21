@@ -324,6 +324,121 @@ sent to analytics, and never leave the database except in the response to the
 person they belong to. Nothing infers a condition from a check-in value: a
 `not_great` answer produces the same calm acknowledgement as `good`.
 
+## The health record (PRD 4)
+
+Every route is nested under the profile the records belong to — never under
+the account, because in assisted setup those are different people. The full
+reasoning, the tables and the privacy rules are in
+[health-data.md](../architecture/health-data.md).
+
+**None of these endpoints touches the device tables.** Health works with no
+robot linked, with one that is offline, and with one the backend has heard
+from.
+
+### Authorization
+
+The same rule as profiles and devices, applied by one dependency:
+
+- the caller is identified by a verified token, never by the path or body;
+- the profile in the path must be reachable through that account's own join
+  row;
+- a record is fetched by profile *and* id together, so nothing is loaded first
+  and authorized second;
+- anything that fails is **`404`, not `403`**.
+
+### The six record types
+
+```http
+GET    /api/v1/profiles/{profile_id}/conditions
+POST   /api/v1/profiles/{profile_id}/conditions
+PATCH  /api/v1/profiles/{profile_id}/conditions/{record_id}
+DELETE /api/v1/profiles/{profile_id}/conditions/{record_id}
+```
+
+The same four exist for `medications`, `allergies`, `clinicians`,
+`procedures` and `medical-notes`. `DELETE` answers `204`.
+
+Only a name is ever required — `name` for conditions, medications, clinicians
+and procedures, `allergen` for allergies, `title` and `body` for notes. A
+`PATCH` changes only the fields it names; sending an explicit `null` clears
+one.
+
+`GET .../medications?active=true` returns only what someone is taking now, and
+`active=false` only what they have stopped. The filter reads the stored flag
+the user set — it is never derived from `end_date`, because people stop
+medications without recording when.
+
+### Dates at the precision the user has
+
+Conditions and procedures each carry **two** date fields — an exact date and a
+year — and at most one may be set:
+
+```json
+{ "name": "Asthma", "diagnosed_year": 2015, "diagnosed_date": null }
+```
+
+Sending both is `422`. Sending neither is fine: "I don't remember when" is an
+answer, and a year is never turned into the 1st of January.
+
+### Provenance is the server's
+
+`conditions`, `medications` and `allergies` return a `source`
+(`user` | `caregiver` | `clinician_import` | `system_import`). **A client
+cannot set it.** Everything written in PRD 4 is stored as `user`, so a record
+can never claim a provenance it does not have.
+
+### `GET /api/v1/profiles/{profile_id}/health-summary`
+
+Counts for the Health overview, and nothing else:
+
+```json
+{
+  "profile_id": "…",
+  "status": "in_progress",
+  "step": "allergies",
+  "blood_type": "O+",
+  "sections": [
+    { "key": "conditions", "title": "Conditions", "count": 2, "complete": true, "updated_at": "…" }
+  ],
+  "completed_sections": 3,
+  "total_sections": 7,
+  "percent": 42,
+  "active_conditions": 1,
+  "active_medications": 2
+}
+```
+
+No condition name, medication name, allergen or note body appears here, so the
+overview — and the optional Today card that shows the same figure — cannot
+leak sensitive detail. A test asserts that.
+
+`percent` is equal weight across the seven sections, rounded down, and is
+informational only. Nothing is blocked by an incomplete profile.
+
+### `GET|PATCH /api/v1/profiles/{profile_id}/health-setup`
+
+Where someone got to in the gradual setup, and their blood type.
+
+```json
+{ "status": "in_progress", "step": "allergies", "blood_type": "O+" }
+```
+
+`status` may be set to `complete` with sections still empty: "I have nothing
+to add" is a legitimate answer, and PRD 4 forbids blocking on it. Adding any
+record moves `not_started` to `in_progress` on its own — starting is something
+you do, not something you declare.
+
+Blood type is written here rather than through `PATCH /profiles/{id}`, so every
+medical write sits behind a health route and the surface that touches medical
+data stays easy to audit. The column itself lives on `profiles`, and `/me`
+does not return it.
+
+### Privacy
+
+Health logs name the resource and the action and stop —
+`health.conditions.create success`. A record's values never appear in a log,
+an error message or an analytics event.
+
 ## Rules for every future endpoint
 
 These are not optional, and they exist because the data is medical:
