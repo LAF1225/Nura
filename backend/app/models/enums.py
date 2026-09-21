@@ -58,6 +58,11 @@ AGE_RANGES = (
     "prefer_not_to_say",
 )
 
+#: How someone says they are feeling in the daily check-in (PRD 3, sections 10
+#: and 14). Three plain options and nothing else: this is a wellbeing prompt,
+#: not symptom tracking, and no clinical meaning is attached to any of them.
+WELLBEING_LEVELS = ("good", "okay", "not_great")
+
 #: Appearance options, already established in PRD 0.
 THEMES = ("system", "light", "dark")
 

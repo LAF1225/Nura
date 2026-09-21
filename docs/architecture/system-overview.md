@@ -46,12 +46,17 @@ lives. The backend is the only component trusted with authorisation.
 | Onboarding     | Welcome → auth → setup mode → profile → preferences → consent → ready to pair → robot connected |
 | Pairing        | BLE discovery, SPAKE2 code verification, encrypted Wi-Fi provisioning, backend claim — written and tested in software, never run on hardware |
 | Firmware       | `firmware/xiao_esp32s3`, compiles for three environments; no board exists to run it |
-| Database       | `users`, `user_settings`, `profiles`, `account_profile_roles`, `devices`, `provisioning_sessions` |
-| Endpoints      | `/health`, `/api/v1/version`, `/api/v1/me`, `/api/v1/onboarding`, `/api/v1/profiles`, `/api/v1/devices` |
+| Today          | Greeting, daily wellbeing check-in, Important Today, configurable cards, robot status — none of it needs a robot |
+| Check-ins      | One per person per local day, editable, queued on the device when offline |
+| Dashboard      | Cards resolved from a server registry; show, hide and reorder from Customize Today |
+| Database       | `users`, `user_settings`, `profiles`, `account_profile_roles`, `devices`, `provisioning_sessions`, `daily_checkins`, `dashboard_preferences` |
+| Endpoints      | `/health`, `/api/v1/version`, `/api/v1/me`, `/api/v1/onboarding`, `/api/v1/profiles`, `/api/v1/devices`, `/api/v1/today`, `/api/v1/daily-checkins`, `/api/v1/dashboard-preferences` |
 
 Deliberately absent: symptom and medication tracking, appointments, AI or
 chat, caregiver permissions, emergency detection, push notifications,
-HealthKit and Health Connect.
+HealthKit and Health Connect. The daily check-in is a wellbeing prompt with
+three answers and an optional note — it is not symptom tracking, and nothing
+in the system interprets it.
 
 ### How a robot joins an account
 
@@ -94,15 +99,20 @@ mobile/
 │   ├── _layout.tsx           Providers: safe area, query client, theme
 │   ├── (tabs)/               The five primary sections
 │   ├── appearance.tsx        More → Appearance
+│   ├── customize-today.tsx   More → Customize Today
 │   └── +not-found.tsx
 └── src/
     ├── components/           Screen, Card, Button, AppText, List, …
+    │   └── today/            Today cards and the card registry
     ├── constants/            Runtime config; the only reader of process.env
-    ├── hooks/                useBackendHealth
+    ├── hooks/                useToday, useDevices, network status, …
     ├── navigation/           Tab definitions (single source of tab order)
     ├── services/
     │   ├── api/              client, typed errors, endpoint functions
     │   ├── auth/             AuthService surface
+    │   ├── checkins/         The offline check-in queue
+    │   ├── dashboard/        Card layout rules (pure functions)
+    │   ├── provisioning/     BLE transport, SPAKE2, provisioning flow
     │   └── storage/          expo-secure-store wrapper
     ├── store/                Zustand store
     ├── theme/                tokens, themes, ThemeProvider
@@ -126,7 +136,11 @@ created when the PRD that needs them arrives, not in advance.
   never shown to a user.
 - **Secrets go in secure storage.** Tokens use `expo-secure-store`
   (Keychain / Keystore). AsyncStorage holds only harmless preferences such as
-  the theme.
+  the theme, and one draft: a check-in the phone has not managed to send.
+- **Rules live on the server.** The app decides what to show, never what is
+  allowed. Which profile a record belongs to, whether a card may be enabled,
+  whether a robot is online and which edit wins are all settled by the
+  backend.
 
 ### Theme resolution
 
@@ -167,10 +181,12 @@ backend/
 │   │   └── v1/router.py      Everything under /api/v1
 │   ├── core/                 Settings and logging
 │   ├── db/                   Engine, session, declarative base
-│   ├── models/               User, UserSettings, Device
+│   ├── models/               User, Profile, Device, DailyCheckIn, …
 │   ├── schemas/              Pydantic request/response models
+│   ├── services/             The rules: onboarding, devices, check-ins, cards
 │   └── main.py
 ├── alembic/                  Migrations
+├── scripts/                  Development fixtures (never for production)
 └── tests/
 ```
 
@@ -227,7 +243,33 @@ provisioning_sessions  (one robot may join one account, briefly)
   profile_id  → profiles      consumed_at  set by the claim that used it
   hardware_id indexed         device_id    → devices (set null)
   created_at, updated_at
+
+daily_checkins  (how one person said they were   dashboard_preferences
+                 feeling on one day)               id          uuid, pk
+  id              uuid, pk                         profile_id  → profiles (cascade)
+  profile_id      → profiles (cascade)             card_key    no CHECK: see below
+  checkin_date    a plain date, the user's own     visible     bool
+  wellbeing_level good | okay | not_great          position    int, ascending
+  note            optional, ≤ 280 chars            unique (profile_id, card_key)
+  unique (profile_id, checkin_date)                created_at, updated_at
+  created_at, updated_at
 ```
+
+A check-in belongs to a **profile**, not to the account that submitted it: in
+assisted setup those differ, and it is the person Nura is for whose day is
+being described. `checkin_date` is a plain date rather than a timestamp,
+because it is the day as the user experienced it — someone checking in at 11pm
+in Karachi means that day, not the following one in UTC. The unique constraint
+is the whole design of the edit flow: changing an answer updates that row, and
+a submission arriving late from the offline queue cannot create a second one.
+
+`dashboard_preferences.card_key` deliberately has **no** CHECK constraint. The
+set of cards grows with every feature PRD, and a constraint would mean a
+migration each time; the API validates against the card registry in
+`app/services/dashboard.py` instead, which is the thing that actually knows
+whether a card exists. A card the user has never touched has no row and falls
+back to the registry defaults, so a card added later appears for everyone
+without a data migration.
 
 `connection_status` is deliberately **not** a column: it is derived from
 `last_seen_at` on every read, so it cannot go stale. Credentials are stored
@@ -243,6 +285,90 @@ cannot drift. Every child table cascades on account deletion.
 An age *band* is stored rather than a date of birth: it is enough for
 age-appropriate behaviour without holding a precise identifier. `profiles`
 contains no medical information of any kind, and a test asserts that.
+
+## The Today screen
+
+Today is assembled by the server and rendered as a list of cards looked up by
+key. Two consequences, both deliberate:
+
+**One request fills the screen.** `/api/v1/today` returns the profile, the
+check-in state, the robot and the card layout together. As feature areas land
+they extend that response rather than adding requests — the alternative is an
+app that opens with six spinners and fills in piece by piece.
+
+**Adding a card does not mean editing the screen.** A card is declared in the
+server registry, given a key in `DashboardCardKey`, and given one entry in the
+client's renderer map. A key the client has no renderer for is skipped, and a
+card whose feature does not exist yet is never shown and cannot be enabled —
+which is how `medications` and `appointments` reserve their keys now without
+anyone seeing an empty medication card.
+
+Important Today is the one part of Today the user cannot switch off. It is
+empty in PRD 3, but it will carry medication and appointment reminders, and a
+reminder someone hid months ago is a reminder that failed.
+
+### Refresh policy
+
+Today refreshes when the screen is focused and the data has gone stale (30
+seconds), and on pull-to-refresh. It never polls. The robot's status is the
+only thing on the screen that changes without the user doing something, and
+the backend already treats a robot as online for 90 seconds after a heartbeat,
+so a timer would spend battery to tell the user something they can see the
+moment they look.
+
+### Today with no signal
+
+The last successful `/api/v1/today` body is kept on the device. If the backend
+cannot be reached, Today renders from it rather than showing an error where the
+screen used to be: the user still sees their check-in and their card layout,
+marked as saved rather than live.
+
+Two limits keep that honest. The saved day is only used **for the day it was
+fetched on** — yesterday’s check-in presented as today’s would be a lie. And
+the robot’s connection is *not* carried over: offline we genuinely do not know
+it, so the card says "Status unavailable" instead of repeating a value that may
+be hours old. Presence only ever comes from the backend.
+
+### A check-in made with no signal
+
+```text
+user answers ──▶ PUT /daily-checkins/today ──▶ stored, card shows it
+                        │ transport failure
+                        ▼
+                 saved on the device, card says so
+                        │ connection returns, or Today regains focus
+                        ▼
+                 PUT again, carrying client_updated_at
+                        │
+                        ├─ server had no newer edit  ─▶ applied, queue cleared
+                        ├─ server had a newer edit   ─▶ server's answer returned,
+                        │                               client adopts it, queue cleared
+                        └─ server refused it outright ─▶ dropped, not retried forever
+```
+
+The queue holds at most one entry, because there is at most one check-in per
+day and only today's can be edited. It is deliberately not a general offline
+synchronisation engine. Conflicts are settled by **the latest explicit user
+edit**: `client_updated_at` is when the user chose the answer, not when the
+request arrived, so an answer that sat in the queue for hours cannot overwrite
+a newer one made since.
+
+The queued entry lives in AsyncStorage, in the app's private data directory —
+not secure storage, which is for credentials. A note is written there and to
+the database, and nowhere else: never to a log, never to analytics.
+
+### Analytics
+
+No analytics SDK is configured, and none is added here. When one is, these are
+the events Today should emit, and they carry no content:
+
+```text
+today_opened              daily_checkin_submitted   daily_checkin_changed
+today_card_hidden         today_card_reordered      connect_nura_selected
+```
+
+A check-in *level* may be counted. A note, a preferred name, a device
+credential or an auth token may never be sent anywhere.
 
 ## Security posture
 
@@ -314,6 +440,13 @@ Acceptable future phrasing describes and defers:
 - "Your symptoms appear to have worsened. Consider contacting a healthcare
   professional."
 - "Nura noticed unusual movement." — never "Nura detected a seizure."
+
+The daily check-in is the first place this bites. A `not_great` answer is
+acknowledged -- "Thanks for checking in." -- and nothing more. It does not
+suggest a cause, does not recommend an action, does not raise an alert, and
+does not notify anybody. A test asserts the wording carries no such language.
+Worsening-symptom logic belongs to a later PRD that has the clinical care to
+present it responsibly.
 
 Health and safety logic stays separable from general assistant functionality,
 so the companion features can evolve without touching the safety path. The

@@ -7,6 +7,14 @@
  */
 import { useAppStore } from '../src/store/appStore';
 import type { OnboardingStatus } from '../src/types/account';
+import { localDateString } from '../src/utils/date';
+
+/**
+ * The date the app will ask for. Computed the same way the app computes it, so
+ * a test never fails at a time-zone boundary just because the suite ran at
+ * 11pm (PRD 3, section 39).
+ */
+const LOCAL_DATE_IN_TESTS = () => localDateString();
 
 /** A signed-out app, which is where a first launch starts. */
 export function signOut(): void {
@@ -39,6 +47,46 @@ export function signInAt(status: OnboardingStatus): void {
   });
 }
 
+/** A card as `/api/v1/dashboard-preferences` returns it. */
+export interface CardState {
+  key: string;
+  title: string;
+  available: boolean;
+  visible: boolean;
+  position: number;
+}
+
+export const DEFAULT_CARDS: CardState[] = [
+  {
+    key: 'daily_checkin',
+    title: 'Daily check-in',
+    available: true,
+    visible: true,
+    position: 0,
+  },
+  {
+    key: 'device_status',
+    title: 'Nura status',
+    available: true,
+    visible: true,
+    position: 1,
+  },
+  {
+    key: 'quick_actions',
+    title: 'Quick actions',
+    available: true,
+    visible: false,
+    position: 2,
+  },
+  {
+    key: 'medications',
+    title: 'Medications',
+    available: false,
+    visible: false,
+    position: 3,
+  },
+];
+
 interface BackendState {
   status?: OnboardingStatus;
   setupMode?: 'self' | 'assisted' | null;
@@ -47,6 +95,13 @@ interface BackendState {
   preferredName?: string;
   /** Raw `/api/v1/devices` response items, in wire format. */
   devices?: Record<string, unknown>[];
+  /** The `device` block of `/api/v1/today`. Null means no robot linked. */
+  todayDevice?: Record<string, unknown> | null;
+  /** Today's check-in, or null for "not completed". */
+  checkIn?: { wellbeing_level: string; note: string | null } | null;
+  cards?: CardState[];
+  /** Status code to answer `/api/v1/today` with, for error-state tests. */
+  todayStatus?: number;
 }
 
 /** Records what the stubbed backend was asked to do, for assertions. */
@@ -87,6 +142,10 @@ export function mockBackend(initial: BackendState = {}): BackendStub {
       privacyAcknowledged: initial.privacyAcknowledged ?? false,
       preferredName: initial.preferredName ?? 'Ada',
       devices: initial.devices ?? [],
+      todayDevice: initial.todayDevice ?? null,
+      checkIn: initial.checkIn ?? null,
+      cards: initial.cards ?? DEFAULT_CARDS.map((card) => ({ ...card })),
+      todayStatus: initial.todayStatus ?? 200,
     },
     restore: () => {
       globalThis.fetch = originalFetch;
@@ -123,6 +182,33 @@ export function mockBackend(initial: BackendState = {}): BackendStub {
     ],
   });
 
+  const checkInBody = () =>
+    stub.state.checkIn === null
+      ? null
+      : {
+          id: 'checkin-1',
+          profile_id: 'profile-1',
+          checkin_date: LOCAL_DATE_IN_TESTS(),
+          wellbeing_level: stub.state.checkIn.wellbeing_level,
+          note: stub.state.checkIn.note,
+          created_at: '2026-09-21T08:00:00Z',
+          updated_at: '2026-09-21T08:00:00Z',
+        };
+
+  const todayBody = () => ({
+    local_date: LOCAL_DATE_IN_TESTS(),
+    profile: { id: 'profile-1', preferred_name: stub.state.preferredName },
+    daily_checkin: {
+      status: stub.state.checkIn === null ? 'not_completed' : 'completed',
+      checkin: checkInBody(),
+      recent_completed_count: stub.state.checkIn === null ? 0 : 1,
+      recent_window_days: 7,
+    },
+    device: stub.state.todayDevice,
+    cards: stub.state.cards,
+    important: [],
+  });
+
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     // Strip the origin. `indexOf` returns -1 for non-API routes such as
@@ -156,6 +242,38 @@ export function mockBackend(initial: BackendState = {}): BackendStub {
 
     if (path.startsWith('/api/v1/me')) {
       return jsonResponse(accountBody());
+    }
+
+    if (path.startsWith('/api/v1/today')) {
+      if (stub.state.todayStatus !== 200) {
+        return jsonResponse({ detail: { code: 'unavailable' } }, stub.state.todayStatus);
+      }
+      return jsonResponse(todayBody());
+    }
+
+    if (path.startsWith('/api/v1/daily-checkins/today')) {
+      if (method === 'PUT' && body) {
+        stub.state.checkIn = {
+          wellbeing_level: body.wellbeing_level,
+          note: body.note ?? null,
+        };
+      }
+      return jsonResponse({ checkin: checkInBody(), applied: true });
+    }
+
+    if (path.startsWith('/api/v1/dashboard-preferences')) {
+      if (method === 'PUT' && body) {
+        const sent: { card_key: string; visible: boolean }[] = body.cards;
+        stub.state.cards = stub.state.cards
+          .map((card) => {
+            const index = sent.findIndex((entry) => entry.card_key === card.key);
+            return index === -1
+              ? card
+              : { ...card, visible: sent[index]!.visible, position: index };
+          })
+          .sort((a, b) => a.position - b.position);
+      }
+      return jsonResponse({ profile_id: 'profile-1', cards: stub.state.cards });
     }
 
     if (path === '/api/v1/devices') {

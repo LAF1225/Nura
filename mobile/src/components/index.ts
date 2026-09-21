@@ -8,6 +8,7 @@ export { FlowErrorCard } from './FlowErrorCard';
 export { ListGroup, ListRow } from './List';
 export { ProgressSteps, type ProgressStepItem } from './ProgressSteps';
 export { Screen } from './Screen';
+export { Skeleton, SkeletonCard } from './Skeleton';
 export { StatusChip, type StatusTone } from './StatusChip';
 export { StepIndicator } from './StepIndicator';
 export { TextField } from './TextField';

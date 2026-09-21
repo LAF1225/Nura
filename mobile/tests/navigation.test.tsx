@@ -41,7 +41,7 @@ const TAB_ROUTES: { label: string; path: string; content: RegExp }[] = [
   { label: 'Care', path: '/care', content: /Schedules, appointments, routines/ },
   { label: 'Nura', path: '/nura', content: /calm companion for everyday health/ },
   { label: 'More', path: '/more', content: /Light, Dark or System/ },
-  { label: 'Today', path: '/', content: /Your daily dashboard will appear here/ },
+  { label: 'Today', path: '/', content: /Nothing needs your attention right now/ },
 ];
 
 /**
@@ -58,7 +58,7 @@ it('renders the app shell and navigates between all five tabs', async () => {
   // so the first assertion waits for hydration.
   await waitFor(
     () => {
-      expect(screen.getByText(/Your daily dashboard will appear here/)).toBeTruthy();
+      expect(screen.getByText(/Nothing needs your attention right now/)).toBeTruthy();
     },
     { timeout: 30_000 }
   );

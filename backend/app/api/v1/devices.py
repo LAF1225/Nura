@@ -13,12 +13,19 @@ exist -- the same rule as profiles.
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.api.deps import CurrentDevice, CurrentUser, DbSession
+from app.api.deps import (
+    CurrentDevice,
+    CurrentUser,
+    DbSession,
+    Now,
+    current_time,
+    http_error,
+)
 from app.core.config import Settings, get_settings
 from app.models import Device, ProvisioningSession, User
 from app.schemas.device import (
@@ -38,30 +45,16 @@ from app.services import devices as device_service
 router = APIRouter(prefix="/devices", tags=["devices"])
 
 
-def current_time() -> datetime:
-    """The clock, as a dependency so tests can move it."""
-    return datetime.now(UTC)
+#: Re-exported so ``app.api.v1.devices.current_time`` keeps working as the
+#: dependency tests override.
+__all__ = ["current_time", "router"]
 
-
-Now = Annotated[datetime, Depends(current_time)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
 
 DEVICE_NOT_FOUND = HTTPException(
     status_code=status.HTTP_404_NOT_FOUND,
     detail={"code": "device_not_found", "message": "Device not found."},
 )
-
-
-def _http_error(error: device_service.ProvisioningError) -> HTTPException:
-    """A rule refusal as ``{"detail": {"code", "message"}}``.
-
-    The code is what the app and firmware branch on; the message is safe to
-    show, but clients use their own wording.
-    """
-    return HTTPException(
-        status_code=error.status_code,
-        detail={"code": error.code, "message": error.message},
-    )
 
 
 def _owned_device(user: User, device_id: uuid.UUID) -> Device:
@@ -133,7 +126,7 @@ def create_provisioning_session(
             db, user, payload.hardware_id, payload.profile_id, now
         )
     except device_service.ProvisioningError as error:
-        raise _http_error(error) from error
+        raise http_error(error) from error
 
     return ProvisioningSessionCreated(
         id=session.id,
@@ -184,7 +177,7 @@ def claim_device(payload: DeviceClaim, db: DbSession, now: Now) -> DeviceClaimed
             now=now,
         )
     except device_service.ProvisioningError as error:
-        raise _http_error(error) from error
+        raise http_error(error) from error
 
     return DeviceClaimed(
         device_id=device.id,
@@ -275,5 +268,5 @@ def complete_setup(
     try:
         device = device_service.complete_setup(db, user, device, now)
     except device_service.ProvisioningError as error:
-        raise _http_error(error) from error
+        raise http_error(error) from error
     return _device_read(device, now)

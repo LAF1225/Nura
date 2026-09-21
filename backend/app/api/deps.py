@@ -11,6 +11,7 @@ signature we checked.
 """
 
 import logging
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Annotated
 
@@ -31,6 +32,7 @@ from app.core.security import (
 from app.db.session import get_db
 from app.models import Device, User, UserSettings
 from app.services.devices import hash_secret
+from app.services.errors import DomainError
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +182,29 @@ def get_current_device(
     return device
 
 
+def current_time() -> datetime:
+    """The clock, as a dependency so tests can move it.
+
+    Anything that depends on "now" -- whether a robot counts as online, which
+    day a check-in belongs to, whether a session has expired -- reads it from
+    here, so one override in a test moves time for the whole API at once.
+    """
+    return datetime.now(UTC)
+
+
+def http_error(error: DomainError) -> HTTPException:
+    """A refused rule as ``{"detail": {"code", "message"}}``.
+
+    The code is what the app and firmware branch on; the message is safe to
+    show, but clients use their own wording.
+    """
+    return HTTPException(
+        status_code=error.status_code,
+        detail={"code": error.code, "message": error.message},
+    )
+
+
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentDevice = Annotated[Device, Depends(get_current_device)]
 DbSession = Annotated[Session, Depends(get_db)]
+Now = Annotated[datetime, Depends(current_time)]

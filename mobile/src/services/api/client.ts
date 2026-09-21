@@ -30,7 +30,7 @@ export function setAuthTokenProvider(provider: TokenProvider): void {
 }
 
 export interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   /** Serialised as JSON. Omit for GET. */
   body?: unknown;
   /** Lets a caller (or TanStack Query) cancel the request. */

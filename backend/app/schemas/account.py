@@ -1,13 +1,17 @@
 """Account (`/me`) request/response models (PRD 1, sections 32 and 35)."""
 
 import uuid
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.user import REMINDER_TIME_PATTERN
 from app.schemas.profile import ProfileRead
 
 Theme = Literal["system", "light", "dark"]
+
+#: Local wall-clock ``HH:MM``. See ``UserSettings`` for why it is not a time.
+ReminderTime = Annotated[str, Field(pattern=REMINDER_TIME_PATTERN)]
 
 
 class SettingsRead(BaseModel):
@@ -22,6 +26,9 @@ class SettingsRead(BaseModel):
     reduce_motion: bool
     voice_first_preference: bool
     simplified_interface: bool
+    #: Recorded only. Nura does not deliver notifications yet (PRD 3, s38).
+    daily_checkin_reminder_enabled: bool
+    daily_checkin_reminder_time: str | None
 
 
 class SettingsUpdate(BaseModel):
@@ -36,6 +43,8 @@ class SettingsUpdate(BaseModel):
     reduce_motion: bool | None = None
     voice_first_preference: bool | None = None
     simplified_interface: bool | None = None
+    daily_checkin_reminder_enabled: bool | None = None
+    daily_checkin_reminder_time: ReminderTime | None = None
 
 
 class AccountRead(BaseModel):

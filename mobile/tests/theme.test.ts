@@ -7,6 +7,8 @@
  * The palette reaching rendered styles is covered by themeRendering.test.tsx.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
 import { useAppStore } from '../src/store/appStore';
 import { darkTheme, getTheme, lightTheme, resolveThemeName } from '../src/theme/themes';
@@ -102,5 +104,36 @@ describe('theme preference persistence', () => {
       'themePreference',
     ]);
     expect(persisted).not.toHaveProperty('session');
+  });
+});
+
+describe('Today components take their colours from the theme', () => {
+  /**
+   * PRD 3, section 41: no colour may be written into a dashboard component.
+   * A hex literal in one of these files is a colour that will not change when
+   * the user switches to Dark, so it is caught here rather than by eye.
+   *
+   * `themeRendering.test.tsx` proves the other half -- that the chosen palette
+   * actually reaches a rendered style.
+   */
+  const FILES = [
+    'app/(tabs)/index.tsx',
+    'app/(tabs)/health.tsx',
+    'app/(tabs)/nura.tsx',
+    'app/customize-today.tsx',
+    'src/components/Skeleton.tsx',
+    'src/components/today/DailyCheckInCard.tsx',
+    'src/components/today/GreetingHeader.tsx',
+    'src/components/today/ImportantTodaySection.tsx',
+    'src/components/today/NuraStatusCard.tsx',
+    'src/components/today/OfflineBanner.tsx',
+    'src/components/today/QuickActionsCard.tsx',
+    'src/components/today/registry.tsx',
+  ];
+
+  it.each(FILES)('%s contains no hard-coded colour', (file) => {
+    const source = readFileSync(join(__dirname, '..', file), 'utf8');
+    expect(source).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    expect(source).not.toMatch(/\brgba?\(/);
   });
 });

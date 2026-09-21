@@ -6,7 +6,15 @@ all under the ``/api/v1`` prefix.
 
 from fastapi import APIRouter
 
-from app.api.v1 import devices, me, onboarding, profiles
+from app.api.v1 import (
+    checkins,
+    dashboard,
+    devices,
+    me,
+    onboarding,
+    profiles,
+    today,
+)
 from app.core.config import API_V1_PREFIX, API_VERSION, MINIMUM_APP_VERSION
 from app.schemas.system import VersionResponse
 
@@ -26,3 +34,6 @@ router.include_router(me.router)
 router.include_router(onboarding.router)
 router.include_router(profiles.router)
 router.include_router(devices.router)
+router.include_router(today.router)
+router.include_router(checkins.router)
+router.include_router(dashboard.router)

@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 
 from app.models import Device, ProvisioningSession, User
 from app.models.enums import ONBOARDING_STATUSES
+from app.services.errors import DomainError
+from app.services.profiles import primary_profile_id
 
 logger = logging.getLogger(__name__)
 
@@ -39,15 +41,10 @@ ONLINE_THRESHOLD = timedelta(seconds=90)
 DEFAULT_DISPLAY_NAME = "Nura"
 
 
-class ProvisioningError(Exception):
+class ProvisioningError(DomainError):
     """A rule refused the request. ``code`` is stable and safe to show."""
 
-    status_code = 400
     code = "provisioning_error"
-
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
-        self.message = message
 
 
 class OnboardingIncompleteError(ProvisioningError):
@@ -137,18 +134,6 @@ def account_has_connected_robot(user: User) -> bool:
 # --- provisioning sessions --------------------------------------------------
 
 
-def _default_profile_id(user: User) -> uuid.UUID | None:
-    """The profile a new robot is for, when the app does not say.
-
-    In assisted setup that is the person being helped, not the account holder.
-    """
-    preferred_role = "setup_helper" if user.setup_mode == "assisted" else "self"
-    for link in user.profile_roles:
-        if link.role == preferred_role:
-            return link.profile_id
-    return user.profile_roles[0].profile_id if user.profile_roles else None
-
-
 def create_provisioning_session(
     db: Session,
     user: User,
@@ -171,7 +156,7 @@ def create_provisioning_session(
         if not any(link.profile_id == profile_id for link in user.profile_roles):
             raise ProfileNotFoundError("Profile not found.")
     else:
-        profile_id = _default_profile_id(user)
+        profile_id = primary_profile_id(user)
 
     existing = db.query(Device).filter(Device.hardware_id == hardware_id).one_or_none()
     if (

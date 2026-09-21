@@ -20,6 +20,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, TimestampMixin
 from app.models.enums import ONBOARDING_STATUSES, SETUP_MODES, THEMES, sql_in_list
 
+#: ``HH:MM`` on a 24-hour clock.
+REMINDER_TIME_PATTERN = r"^([01][0-9]|2[0-3]):[0-5][0-9]$"
+
 if TYPE_CHECKING:
     # Import for typing only. At runtime these modules import this one, so a
     # real import here would be circular; SQLAlchemy resolves relationships by
@@ -104,6 +107,11 @@ class UserSettings(Base, TimestampMixin):
     __tablename__ = "user_settings"
     __table_args__ = (
         CheckConstraint(f"theme IN {sql_in_list(THEMES)}", name="ck_user_settings_theme"),
+        CheckConstraint(
+            "daily_checkin_reminder_time IS NULL OR "
+            f"daily_checkin_reminder_time ~ '{REMINDER_TIME_PATTERN}'",
+            name="ck_user_settings_daily_checkin_reminder_time",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -132,5 +140,20 @@ class UserSettings(Base, TimestampMixin):
     simplified_interface: Mapped[bool] = mapped_column(
         nullable=False, server_default="false"
     )
+
+    # --- daily check-in reminder (PRD 3, section 38) ---
+    # The preference only. Nura does not schedule or deliver notifications
+    # yet -- there is no notification foundation to build on, and PRD 3 asks
+    # for the configuration model rather than the delivery. Recording it now
+    # means the reminder feature, when it arrives, finds the user's answer
+    # already there instead of asking again.
+    daily_checkin_reminder_enabled: Mapped[bool] = mapped_column(
+        nullable=False, server_default="false"
+    )
+    #: Local wall-clock time as ``HH:MM``, e.g. ``09:00``. A string rather than
+    #: a ``Time`` column on purpose: this is the time on the user's own clock,
+    #: not an instant the server can compute against, and storing it as text
+    #: keeps that obvious at every layer.
+    daily_checkin_reminder_time: Mapped[str | None] = mapped_column(String(5))
 
     user: Mapped[User] = relationship(back_populates="settings")

@@ -77,6 +77,7 @@ function AppShell() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
         <Stack.Screen name="appearance" options={{ title: 'Appearance' }} />
+        <Stack.Screen name="customize-today" options={{ title: '' }} />
         <Stack.Screen name="connect-device" options={{ title: '' }} />
         <Stack.Screen name="pairing" options={{ headerShown: false }} />
         <Stack.Screen name="devices/[id]" options={{ title: '' }} />

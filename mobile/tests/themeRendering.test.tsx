@@ -53,7 +53,7 @@ it('renders the dark palette when Dark is chosen, not the light one', async () =
   renderRouter('app', { initialUrl: '/' });
 
   const body = await waitFor(
-    () => screen.getByText(/Your daily dashboard will appear here/),
+    () => screen.getByText(/Nothing needs your attention right now/),
     { timeout: 30_000 }
   );
 
@@ -66,7 +66,7 @@ it('renders the dark palette when Dark is chosen, not the light one', async () =
   useAppStore.getState().setThemePreference('light');
 
   await waitFor(() => {
-    const next = screen.getByText(/Your daily dashboard will appear here/);
+    const next = screen.getByText(/Nothing needs your attention right now/);
     expect(flattenStyle(next.props.style).color).toBe(lightTheme.colors.textSecondary);
   });
 });

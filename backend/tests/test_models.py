@@ -8,6 +8,8 @@ required.
 from app.db.base import Base
 from app.models import (
     AccountProfileRole,
+    DailyCheckIn,
+    DashboardPreference,
     Device,
     Profile,
     ProvisioningSession,
@@ -24,6 +26,8 @@ def test_table_set_matches_the_prds() -> None:
         "profiles",
         "account_profile_roles",
         "provisioning_sessions",
+        "daily_checkins",
+        "dashboard_preferences",
     }
 
 
@@ -53,6 +57,8 @@ def test_settings_columns_include_accessibility_preferences() -> None:
         "reduce_motion",
         "voice_first_preference",
         "simplified_interface",
+        "daily_checkin_reminder_enabled",
+        "daily_checkin_reminder_time",
         "created_at",
         "updated_at",
     }
@@ -127,3 +133,57 @@ def test_device_tables_hold_no_medical_information() -> None:
     }
     for model in (Device, ProvisioningSession):
         assert set(model.__table__.columns.keys()) & forbidden == set()
+
+
+def test_daily_checkin_is_a_wellbeing_answer_not_a_symptom_record() -> None:
+    """PRD 3, sections 10 and 61: three levels and a note, nothing more."""
+    columns = set(DailyCheckIn.__table__.columns.keys())
+    assert columns == {
+        "id",
+        "profile_id",
+        "checkin_date",
+        "wellbeing_level",
+        "note",
+        "created_at",
+        "updated_at",
+    }
+    forbidden = {
+        "severity",
+        "symptom",
+        "symptoms",
+        "pain_score",
+        "diagnosis",
+        "medication",
+        "photo_url",
+        "temperature",
+    }
+    assert columns & forbidden == set()
+
+
+def test_a_check_in_belongs_to_a_profile_not_an_account() -> None:
+    """The record is about the person Nura is for, not whoever submitted it."""
+    assert "profile_id" in DailyCheckIn.__table__.columns
+    assert "user_id" not in DailyCheckIn.__table__.columns
+    assert "account_id" not in DailyCheckIn.__table__.columns
+
+
+def test_only_one_check_in_can_exist_per_profile_per_day() -> None:
+    """PRD 3, section 11, enforced by the database rather than by the API."""
+    constraints = {
+        tuple(column.name for column in constraint.columns)
+        for constraint in DailyCheckIn.__table__.constraints
+        if constraint.__class__.__name__ == "UniqueConstraint"
+    }
+    assert ("profile_id", "checkin_date") in constraints
+
+
+def test_dashboard_preference_is_one_row_per_card() -> None:
+    assert set(DashboardPreference.__table__.columns.keys()) == {
+        "id",
+        "profile_id",
+        "card_key",
+        "visible",
+        "position",
+        "created_at",
+        "updated_at",
+    }

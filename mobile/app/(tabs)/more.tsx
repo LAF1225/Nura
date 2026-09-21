@@ -34,6 +34,14 @@ export default function MoreScreen() {
       <View style={{ gap: spacing.lg }}>
         <ListGroup>
           <ListRow
+            label="Customize Today"
+            description="Choose which cards appear"
+            leadingIcon="options-outline"
+            showChevron
+            onPress={() => router.push('/customize-today')}
+            accessibilityHint="Opens Today screen settings"
+          />
+          <ListRow
             label="Appearance"
             description="Light, Dark or System"
             leadingIcon="color-palette-outline"

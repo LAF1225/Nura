@@ -117,10 +117,16 @@ the client.
 
 ### `PATCH /api/v1/me`
 
-Updates account preferences only: `theme`, `language`, and the accessibility
-flags (`larger_text`, `high_contrast`, `reduce_motion`,
-`voice_first_preference`, `simplified_interface`). Fields left out are
-unchanged. Onboarding progress and profile details are not touched here.
+Updates account preferences only: `theme`, `language`, the accessibility flags
+(`larger_text`, `high_contrast`, `reduce_motion`, `voice_first_preference`,
+`simplified_interface`), and the daily check-in reminder
+(`daily_checkin_reminder_enabled`, `daily_checkin_reminder_time` as `HH:MM` on
+the user's own clock). Fields left out are unchanged. Onboarding progress and
+profile details are not touched here.
+
+The reminder fields are **recorded only**. Nura does not schedule or deliver
+notifications yet; PRD 3 section 38 asks for the configuration model so the
+answer is already there when delivery arrives.
 
 ### `GET /api/v1/onboarding` · `PATCH /api/v1/onboarding`
 
@@ -207,6 +213,116 @@ Both the provisioning token and the device token are 256 random bits, stored
 only as SHA-256 hashes, and shown exactly once. The robot's bootstrap secret is
 stored the same way. Nothing in the `devices` table can be turned back into a
 credential.
+
+## Today, check-ins and the dashboard (PRD 3)
+
+All four routes derive the profile they act on from the signed-in account: the
+account's own profile, or the person being helped in assisted setup. A
+`profile_id` may be sent explicitly, and is checked against the caller's own
+links — someone else's id returns **`404`, not `403`**, the same rule as
+profiles and devices.
+
+### Which day is "today"
+
+A check-in belongs to the user's **local calendar day**, stored as a plain
+date. The client sends the date on its own clock:
+
+```text
+GET /api/v1/today?local_date=2026-09-21
+```
+
+Omitting it falls back to the server's UTC date, which is right only by
+accident. A date more than one day from the server's own is refused with
+`422 local_date_out_of_range`: real offsets run from UTC-12 to UTC+14, so one
+day either way covers the world, while stopping the "today" endpoints being
+used to write arbitrary history.
+
+### `GET /api/v1/today`
+
+Everything the Today screen needs, in one request: the profile's preferred
+name, the check-in state, the robot, and the card layout. It answers in every
+state — no profile yet, no robot, a robot that is offline, a robot the backend
+has heard from — and none of those is an error.
+
+```json
+{
+  "local_date": "2026-09-21",
+  "profile": { "id": "…", "preferred_name": "Safdar" },
+  "daily_checkin": {
+    "status": "not_completed",
+    "checkin": null,
+    "recent_completed_count": 4,
+    "recent_window_days": 7
+  },
+  "device": {
+    "device_id": "…",
+    "display_name": "Nura",
+    "connection_status": "offline",
+    "last_seen_at": "2026-09-21T12:00:00Z",
+    "setup_completed": true
+  },
+  "cards": [
+    { "key": "daily_checkin", "title": "Daily check-in", "available": true, "visible": true, "position": 0 }
+  ],
+  "important": []
+}
+```
+
+`device` is `null` when no robot is linked. `important` is always empty in
+PRD 3: nothing produces items yet, and the shape is fixed now so medication
+reminders and appointments can join later without the client changing. As
+feature areas land they extend this response rather than adding requests — the
+alternative is an app that opens with six spinners.
+
+### `GET /api/v1/daily-checkins/today` · `PUT /api/v1/daily-checkins/today`
+
+`PUT`, not `POST`, because there is exactly one check-in per person per day —
+enforced by a unique constraint on `(profile_id, checkin_date)`. The same
+request sent twice leaves the same single row, which is what a retried offline
+submission needs.
+
+Body: `wellbeing_level` (`good` | `okay` | `not_great`), optional `note`
+(trimmed; blank becomes null), optional `local_date`, `profile_id` and
+`client_updated_at`.
+
+`client_updated_at` is when the *user* made the choice, which is not when the
+request arrived: a queued offline submission may be hours old. If the stored
+row has been edited more recently, the stored row stands and is returned
+unchanged with `applied: false`, so the client adopts it rather than
+overwriting a newer answer (PRD 3, section 28).
+
+```json
+{ "checkin": { "checkin_date": "2026-09-21", "wellbeing_level": "okay", "note": null }, "applied": true }
+```
+
+### `GET /api/v1/daily-checkins/recent`
+
+The last `days` (default 7, max 31) ending at `local_date`: the entries, and
+how many days have one. A count, not an analysis — PRD 3 section 12 rules out
+trends, streaks and correlations until there is clinical care to present them
+responsibly.
+
+### `GET /api/v1/dashboard-preferences` · `PUT /api/v1/dashboard-preferences`
+
+Which Today cards a profile shows, and in what order. The whole layout is read
+and written at once, and **position comes from the order of the list** rather
+than a number the client has to keep consistent, so two cards can never claim
+the same slot.
+
+Every card carries `available`. It is `false` while the feature behind the card
+does not exist: such a card is listed, never shown, and cannot be enabled —
+`422 unknown_card` — so no row for a feature that does not exist reaches the
+database. That is what lets `medications` and `appointments` reserve their keys
+now without anyone seeing an empty medication card. Cards a profile has never
+touched have no row and fall back to the registry defaults, so a card added by
+a later PRD appears without a data migration.
+
+### Privacy
+
+Check-in notes are health-adjacent personal data. They are never logged, never
+sent to analytics, and never leave the database except in the response to the
+person they belong to. Nothing infers a condition from a check-in value: a
+`not_great` answer produces the same calm acknowledgement as `good`.
 
 ## Rules for every future endpoint
 

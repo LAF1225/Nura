@@ -3,11 +3,15 @@
 Nura is a desktop health companion: a small robot built around a Seeed Studio
 XIAO ESP32-S3, a cross-platform mobile app, and a backend service.
 
-This repository is at **PRD 2 — Robot Pairing, BLE Discovery & Wi-Fi
-Provisioning**. It is a working technical skeleton, not yet a health app: a
-branded five-tab app with Light/Dark/System themes, account creation and
-onboarding, a FastAPI backend, and the firmware and app flow for connecting a
-robot.
+This repository is at **PRD 3 — Core App Shell, Today Dashboard & Daily
+Check-In**. It is the beginning of a real everyday app rather than a setup
+utility: a branded five-tab app with Light/Dark/System themes, account creation
+and onboarding, a Today screen with a daily wellbeing check-in and configurable
+cards, a FastAPI backend, and the firmware and app flow for connecting a robot.
+
+> **Nothing in PRD 3 needs the robot.** Today works with no robot linked, with
+> one that is offline, and with one the backend has heard from — and a seeding
+> script reaches all three states without hardware. See section 8.
 
 > **The robot has not been built yet.** The pairing flow, the firmware and the
 > backend are written and tested as far as software allows — the cryptography
@@ -308,7 +312,80 @@ intended sequence, written down so it can be followed the first time.
 10. Hold BOOT for 3 seconds and re-run the flow with a different network: the
     device record must stay the same one, not a second entry.
 
-## 8. Run the tests
+## 8. Today, check-ins and the development fixtures
+
+Once onboarding is finished the app lands on **Today**: a greeting, the daily
+wellbeing check-in, what needs attention today, and whether Nura is connected.
+Cards are looked up by key from a registry, so the user can show, hide and
+reorder them from **More → Customize Today**.
+
+### Which day is "today"
+
+The phone sends the date on its own clock (`?local_date=YYYY-MM-DD`) and the
+backend stores it as a plain date. Someone checking in at 11pm in Karachi means
+that day, not the following one in UTC. The server accepts any date within one
+day of its own — enough for every real time zone, and narrow enough that the
+"today" endpoint cannot be used to write arbitrary history.
+
+### A check-in made with no signal
+
+Answering while offline saves the check-in on the phone and says so on the
+card. It is sent when the connection returns, or when Today is next focused.
+Because the endpoint is a `PUT` keyed on person and date, a queued answer that
+arrives late updates the same row rather than creating a second one. If the
+server has a *newer* edit than the queued one, the server's answer wins and the
+app adopts it (`applied: false` in the response).
+
+### Today with no signal
+
+The last successful Today response is kept on the device, so an outage shows
+the saved day rather than an error page. It is only used for the day it was
+fetched on, and the robot’s connection is deliberately left out of it: offline,
+the card says "Status unavailable" rather than repeating a status that may be
+hours old.
+
+### Seeing the connected states without a robot
+
+A robot is online if `devices.last_seen_at` is within 90 seconds. That one
+field is the whole story, so writing it directly produces the genuine article.
+From `backend/`, with the virtualenv active:
+
+```bash
+python -m scripts.seed_dev --list
+```
+
+```bash
+python -m scripts.seed_dev --account latest --device online --keep-online 300
+```
+
+```bash
+python -m scripts.seed_dev --account latest --device offline --minutes-ago 42
+```
+
+```bash
+python -m scripts.seed_dev --account latest --device none
+```
+
+`--account latest` means the most recently created account, which during
+development is the one signed in on the phone. `--device online` is a single
+heartbeat and goes stale after 90 seconds exactly as an unplugged robot would;
+`--keep-online` holds it up for as long as you need to walk through the screen.
+The script also seeds check-ins:
+
+```bash
+python -m scripts.seed_dev --account latest --checkin not_great --note "tired"
+```
+
+```bash
+python -m scripts.seed_dev --account latest --checkin none
+```
+
+It refuses to run unless `APP_ENV=development`, and it is not reachable from
+the app: there is no "pretend the robot is online" button anywhere in the UI.
+The seeded device uses the hardware id `NURA-DEADBEEF0001`, which is not a real
+MAC address, so it can never collide with a board you later build.
+
+## 9. Run the tests
 
 Mobile:
 
@@ -331,11 +408,13 @@ cd firmware/xiao_esp32s3
 ../.venv/Scripts/pio test -e xiao_esp32s3
 ```
 
-The mobile suite needs nothing running. It covers the pairing flow end to end
+The mobile suite needs nothing running. It mounts the real Today screen and
+drives a check-in against a stubbed backend, covers the pairing flow end to end
 against a simulated robot that runs the real protocol, and checks the app's
 cryptography against RFC 9382's test vectors. One test parses the firmware's
 `protocol.h` and fails if the app and the robot disagree about any UUID,
-message type or status code.
+message type or status code; another reads the Today components and fails if a
+colour has been written into one instead of coming from the theme.
 
 The backend suite **does need PostgreSQL running**. It creates a separate
 `nura_test` database on first run, applies the real migrations to it, and rolls
@@ -345,7 +424,7 @@ suite needs a Supabase project or a network connection: tokens are signed with
 a key pair generated inside the test run and verified by the real production
 verifier.
 
-## 9. Code quality
+## 10. Code quality
 
 ```bash
 cd mobile
@@ -358,7 +437,7 @@ npm run format
 cd backend
 ruff check .
 ruff format .
-mypy app alembic
+mypy app alembic scripts
 ```
 
 ## Database migrations
@@ -406,6 +485,10 @@ string from the Supabase dashboard into `backend/.env` and run
 | `mobile/src/store/`       | Global state (Zustand)                          |
 | `mobile/assets/branding/` | Supplied Nura logo files                        |
 | `mobile/src/services/provisioning/` | BLE transport, SPAKE2, provisioning flow |
+| `mobile/src/components/today/` | Today cards and the card registry            |
+| `mobile/src/services/checkins/` | The offline check-in queue                  |
+| `mobile/src/services/today/` | The saved copy of the last Today response       |
+| `backend/scripts/`        | Development fixtures (never for production)     |
 | `backend/app/api/`        | HTTP routes (`/health`, `/api/v1/*`)            |
 | `backend/app/models/`     | SQLAlchemy models                               |
 | `backend/alembic/`        | Migrations                                      |
@@ -426,7 +509,8 @@ string from the Supabase dashboard into `backend/.env` and run
   [FastAPI + PostgreSQL](docs/decisions/0002-fastapi-postgresql.md),
   [Device connectivity](docs/decisions/0003-device-connectivity.md),
   [Supabase Auth](docs/decisions/0004-supabase-auth.md),
-  [BLE pairing](docs/decisions/0005-ble-pairing.md)
+  [BLE pairing](docs/decisions/0005-ble-pairing.md),
+  [Today and offline check-ins](docs/decisions/0006-today-and-offline-checkins.md)
 
 ## Known issues
 
@@ -442,6 +526,15 @@ real database in `backend/tests/`, so the behaviour is verified, just not
 through the UI. Tried without success: mocking `react-native-screens` freeze,
 setting `IS_REACT_ACT_ENVIRONMENT`, draining timers inside `act`, and
 navigating directly instead of through the gate.
+
+The same limitation applies to Today: submitting a check-in *is* covered
+(it travels through TanStack Query, which does re-render), but pressing
+**Change** to reopen the chooser, typing a note, and the show/hide and reorder
+controls on **Customize Today** only move local state, so they are not
+asserted. The logic behind them — card visibility, ordering, the layout sent to
+the server, the greeting buckets, the local-date rule and the offline queue —
+is covered directly in `mobile/tests/`, and every server-side rule is covered
+against a real database in `backend/tests/`.
 
 **Only email sign-in has been verified end to end.** Google, Apple and phone
 are implemented against the Supabase SDK and documented above, but marked

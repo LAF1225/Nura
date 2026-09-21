@@ -2,7 +2,9 @@
  * Care -- placeholder for PRD 0 (section 8).
  *
  * Future purpose: medication schedules, appointments, caregivers, routines,
- * family communication and safety monitoring.
+ * family communication and safety monitoring. PRD 3 keeps it a placeholder on
+ * purpose (section 35): none of those features exists, and a screen full of
+ * disabled rows would only promise things Nura cannot do.
  */
 import { AppText, Card, Screen } from '../../src/components';
 import { spacing } from '../../src/theme/tokens';
