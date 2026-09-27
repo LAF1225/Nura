@@ -54,6 +54,12 @@ CARD_REGISTRY: tuple[CardDefinition, ...] = (
     CardDefinition(
         "daily_checkin", "Daily check-in", available=True, default_visible=True
     ),
+    # Real from PRD 5, and on by default: a dose that is due is the single
+    # most useful thing Today can show. It sits directly under the check-in
+    # because it is the card people act on. A profile with no schedules has
+    # nothing to draw, so the card is simply absent rather than empty
+    # (PRD 5, sections 28 and 29).
+    CardDefinition("medications", "Medications", available=True, default_visible=True),
     CardDefinition("device_status", "Nura status", available=True, default_visible=True),
     # Real, but off by default: Today should open calm rather than full
     # (PRD 3, sections 3 and 19).
@@ -67,12 +73,15 @@ CARD_REGISTRY: tuple[CardDefinition, ...] = (
     CardDefinition(
         "health_profile", "Health profile", available=True, default_visible=False
     ),
+    # Real from PRD 6, and on by default -- but it draws nothing at all for
+    # anybody who has never logged a symptom, so it stays invisible until it
+    # is relevant. Once somebody has used it, it shows what is active or
+    # offers a way to log one (PRD 6, section 39).
+    CardDefinition("symptoms", "Symptoms", available=True, default_visible=True),
     # Reserved for later PRDs. No renderer, no data, never shown.
-    CardDefinition("medications", "Medications", available=False, default_visible=False),
     CardDefinition(
         "appointments", "Appointments", available=False, default_visible=False
     ),
-    CardDefinition("symptoms", "Symptoms", available=False, default_visible=False),
     CardDefinition("routines", "Routines", available=False, default_visible=False),
     CardDefinition("hydration", "Hydration", available=False, default_visible=False),
     CardDefinition(

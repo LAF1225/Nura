@@ -107,9 +107,10 @@ describe('theme preference persistence', () => {
   });
 });
 
-describe('Today components take their colours from the theme', () => {
+describe('Today, Health, medication and symptom screens take their colours from the theme', () => {
   /**
-   * PRD 3, section 41: no colour may be written into a dashboard component.
+   * PRD 3 section 41, PRD 5 section 61 and PRD 6 section 68: no colour may be
+   * written into one of these components.
    * A hex literal in one of these files is a colour that will not change when
    * the user switches to Dark, so it is caught here rather than by eye.
    *
@@ -136,6 +137,37 @@ describe('Today components take their colours from the theme', () => {
     'src/features/health/components/RecordForm.tsx',
     'src/features/health/components/Completeness.tsx',
     'src/features/health/components/HealthProfileCard.tsx',
+    'app/(tabs)/care.tsx',
+    'app/medications/index.tsx',
+    'app/medications/schedules.tsx',
+    'app/medications/history.tsx',
+    'app/medications/skip.tsx',
+    'app/medications/schedule/[id].tsx',
+    'app/medications/supply/index.tsx',
+    'app/medications/supply/[medicationId].tsx',
+    'src/features/medications/components/DoseActionButtons.tsx',
+    'src/features/medications/components/DoseCard.tsx',
+    'src/features/medications/components/MedicationScheduleRow.tsx',
+    'src/features/medications/components/MedicationSummaryCards.tsx',
+    'src/features/medications/components/MedicationsTodayCard.tsx',
+    'src/features/medications/components/ScheduleForm.tsx',
+    'app/symptoms/index.tsx',
+    'app/symptoms/log.tsx',
+    'app/symptoms/talk.tsx',
+    'app/symptoms/review.tsx',
+    'app/symptoms/history.tsx',
+    'app/symptoms/[id]/index.tsx',
+    'app/symptoms/[id]/update.tsx',
+    'src/features/symptoms/components/ChangeStateSelector.tsx',
+    'src/features/symptoms/components/Conversation.tsx',
+    'src/features/symptoms/components/PhotoAttachmentPicker.tsx',
+    'src/features/symptoms/components/SafetyNotice.tsx',
+    'src/features/symptoms/components/SeverityInput.tsx',
+    'src/features/symptoms/components/StructuredSummary.tsx',
+    'src/features/symptoms/components/SymptomCard.tsx',
+    'src/features/symptoms/components/SymptomPhotoView.tsx',
+    'src/features/symptoms/components/SymptomTimelineRow.tsx',
+    'src/features/symptoms/components/SymptomsTodayCard.tsx',
   ];
 
   it.each(FILES)('%s contains no hard-coded colour', (file) => {

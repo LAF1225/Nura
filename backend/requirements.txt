@@ -8,3 +8,13 @@ psycopg[binary]==3.3.5
 alembic==1.20.0
 pydantic-settings==2.15.0
 PyJWT[crypto]==2.14.0
+
+# Multipart form parsing, which is how a symptom photo reaches the API.
+# FastAPI needs it for `UploadFile`; without it an upload route raises at
+# import time rather than at request time (PRD 6, section 34).
+python-multipart==0.0.32
+
+# The IANA time zone database. Windows ships no system copy, so without
+# this `zoneinfo` cannot resolve `Europe/London` -- and every medication
+# reminder time depends on resolving a zone (PRD 5, section 12).
+tzdata==2026.4

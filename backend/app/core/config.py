@@ -74,9 +74,38 @@ class Settings(BaseSettings):
     #: the robot on the same Wi-Fi can reach too. Required outside development.
     device_api_base_url: str | None = None
 
+    #: Where private user media -- symptom photos -- is kept. Relative paths
+    #: resolve against `backend/`. Must not be inside anything served
+    #: statically: the only way to these bytes is the authenticated route
+    #: (PRD 6, section 63). The default is gitignored.
+    private_media_root: str = ".private-media"
+
+    #: Largest symptom photo the API will accept, in bytes (PRD 6, section 34).
+    #: The app compresses before uploading, so this is a backstop rather than
+    #: the usual size.
+    max_photo_bytes: int = 6 * 1024 * 1024
+
+    #: How many photos one symptom entry may carry (PRD 6, section 31).
+    max_photos_per_entry: int = 5
+
+    #: Whether the reviewed urgent-care safety rules are switched on
+    #: (PRD 6, section 44). **False, and it must stay false until a clinician
+    #: has reviewed the rule set and its wording.** The rules layer exists, is
+    #: tested and is deliberately inert: with this off, a symptom recorded as
+    #: worsening produces the generic "consider contacting a healthcare
+    #: professional" guidance and nothing stronger. Turning it on is a
+    #: clinical and legal decision, not a deployment one.
+    symptom_red_flag_rules_enabled: bool = False
+
     @property
     def is_development(self) -> bool:
         return self.app_env == "development"
+
+    @property
+    def media_root_path(self) -> Path:
+        """The private media root as an absolute path."""
+        root = Path(self.private_media_root)
+        return root if root.is_absolute() else BACKEND_ROOT / root
 
     @property
     def supabase_base_url(self) -> str | None:

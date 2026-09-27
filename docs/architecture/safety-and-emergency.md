@@ -53,9 +53,12 @@ needs confirming.
   companion features can change without touching the safety path.
 - **Camera and microphone data is not retained by default.** Any capture needs
   an explicit retention rule decided before the feature ships.
-- **Offline behaviour must be deliberate.** PRD 0 only prepares for offline
-  states; medication alarms and offline emergency behaviour are out of scope
-  and must not be approximated.
+- **Offline behaviour must be deliberate.** Medication reminders are the one
+  place this is now implemented, and deliberately so: the reminder is an
+  OS-scheduled local notification, an action taken with no signal is queued on
+  the device rather than lost, and the queue is drained when the connection
+  returns — see [the medication system](medication-system.md). *Emergency*
+  offline behaviour remains out of scope and must not be approximated.
 
 ## Caregiver access
 

@@ -19,9 +19,13 @@ import type {
   DashboardCard,
   DashboardCardKey,
   TodayDevice,
+  TodayMedications,
+  TodaySymptoms,
   WellbeingLevel,
 } from '../../types/today';
 import { HealthProfileCard } from '../../features/health/components/HealthProfileCard';
+import { MedicationsTodayCard } from '../../features/medications/components/MedicationsTodayCard';
+import { SymptomsTodayCard } from '../../features/symptoms/components/SymptomsTodayCard';
 import { DailyCheckInCard } from './DailyCheckInCard';
 import { NuraStatusCard } from './NuraStatusCard';
 import { QuickActionsCard } from './QuickActionsCard';
@@ -29,6 +33,10 @@ import { QuickActionsCard } from './QuickActionsCard';
 /** Everything a card renderer is allowed to know about the day. */
 export interface DashboardCardContext {
   device: TodayDevice | null;
+  /** The medication block of the Today summary. Null with no profile. */
+  medications: TodayMedications | null;
+  /** The symptom block. Null with no profile. */
+  symptoms: TodaySymptoms | null;
   /** True when the screen is showing saved information rather than live data. */
   statusUnavailable: boolean;
   checkIn: DailyCheckIn | null;
@@ -61,6 +69,15 @@ export const CARD_RENDERERS: Partial<Record<DashboardCardKey, CardRenderer>> = {
   // for a health request when the card is hidden, which it is by default
   // (PRD 4, section 47).
   health_profile: () => <HealthProfileCard />,
+  // Handed its data, because the Today request already carries it: the whole
+  // point of PRD 5 section 53 is that medications arrive with the day rather
+  // than costing a second request (PRD 3, section 16). The card draws nothing
+  // at all for a profile with no schedules.
+  medications: (context) => <MedicationsTodayCard medications={context.medications} />,
+  // Handed its data for the same reason, and it draws nothing at all for
+  // anybody who has never logged a symptom -- which is most people, most of
+  // the time (PRD 6, section 39).
+  symptoms: (context) => <SymptomsTodayCard symptoms={context.symptoms} />,
 };
 
 /** Keys this build can draw. Used to filter whatever the server sends. */

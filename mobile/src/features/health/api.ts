@@ -132,6 +132,8 @@ export function parseHealthSummary(raw: unknown): HealthSummary {
     percent: count(body.percent),
     activeConditions: count(body.active_conditions),
     activeMedications: count(body.active_medications),
+    activeSymptoms: count(body.active_symptoms),
+    symptomUpdatesThisWeek: count(body.symptom_updates_this_week),
   };
 }
 

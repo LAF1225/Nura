@@ -14,6 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.models.checkin import NOTE_MAX_LENGTH
 from app.models.dashboard import CARD_KEY_MAX_LENGTH
 from app.models.enums import WELLBEING_LEVELS
+from app.schemas.medication import TodayMedicationsRead
+from app.schemas.symptom import TodaySymptomsRead
 
 WellbeingLevel = Literal["good", "okay", "not_great"]
 CheckInStatus = Literal["completed", "not_completed"]
@@ -176,10 +178,10 @@ class TodayCheckInRead(BaseModel):
 class TodayItemRead(BaseModel):
     """An Important Today item.
 
-    Nothing produces these yet and the list is always empty in PRD 3. The
-    shape is fixed now so medication reminders, appointments and follow-ups
-    can be added later without the client changing how it renders the section
-    (PRD 3, sections 21 and 60).
+    The shape was fixed in PRD 3 so later modules could fill the section
+    without the client changing how it renders. PRD 5 is the first to do it:
+    medication doses that are overdue, due, or next up. Appointments and
+    follow-ups will arrive the same way (PRD 3, sections 21 and 60).
     """
 
     id: str
@@ -203,4 +205,10 @@ class TodaySummaryRead(BaseModel):
     #: (PRD 3, sections 23 and 54).
     device: TodayDeviceRead | None
     cards: list[DashboardCardRead]
+    #: Null only for an account with no profile yet.
+    medications: TodayMedicationsRead | None
+    #: Null for the same reason. ``has_episodes`` is False for anybody who
+    #: has never logged a symptom, and the card is then not drawn at all
+    #: (PRD 6, section 39).
+    symptoms: TodaySymptomsRead | None
     important: list[TodayItemRead]

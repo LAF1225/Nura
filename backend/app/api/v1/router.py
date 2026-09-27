@@ -9,12 +9,15 @@ from fastapi import APIRouter
 from app.api.v1 import (
     checkins,
     dashboard,
+    device_actions,
     devices,
     health,
     health_records,
     me,
+    medications,
     onboarding,
     profiles,
+    symptoms,
     today,
 )
 from app.core.config import API_V1_PREFIX, API_VERSION, MINIMUM_APP_VERSION
@@ -41,3 +44,6 @@ router.include_router(checkins.router)
 router.include_router(dashboard.router)
 router.include_router(health.router)
 router.include_router(health_records.router)
+router.include_router(medications.router)
+router.include_router(symptoms.router)
+router.include_router(device_actions.router)

@@ -2,8 +2,8 @@
 
 How Nura is built, what exists today, and what is genuinely proven to work.
 
-- **Date:** 21 September 2026
-- **Stage:** PRD 4 — Medical Profile & Health Record Foundation
+- **Date:** 27 September 2026
+- **Stage:** PRD 6 — Symptom Tracking & Structured Symptom Communication
 - **Branch:** `prd-2-pairing` (not merged into `main`)
 
 | Commit | Stage |
@@ -12,16 +12,21 @@ How Nura is built, what exists today, and what is genuinely proven to work.
 | `1d653f1` | PRD 1 — account creation, authentication, onboarding |
 | `aae4243` | PRD 2 checkpoint (work in progress) |
 | `f7417b4` | PRD 2 — robot pairing, BLE discovery, Wi-Fi provisioning |
-| *(uncommitted)* | PRD 3 — Today, daily check-in, dashboard cards |
-| *(uncommitted)* | PRD 4 — the health record foundation |
+| `1e74912` | PRD 3 — Today, daily check-in, dashboard cards |
+| `db9967b` | PRD 4 — the health record foundation |
+| *(uncommitted)* | PRD 5 — medication scheduling, reminders, adherence |
+| *(uncommitted)* | PRD 6 — symptom tracking and structured communication |
 
-> PRD 3 and PRD 4 are finished and green but are still in the working tree;
-> neither has been committed. Everything below describes the code as it stands
-> on disk.
+> PRD 5 and PRD 6 are both finished and green but are still in the working tree;
+> neither has been committed, and they are now interleaved there, so separating
+> them into two commits would need `git add -p` rather than `git add -A`. The
+> repository has no git remote, so nothing has been pushed anywhere. Everything
+> below describes the code as it stands on disk.
 
 > **Nura does not diagnose illness, prescribe treatment or change medication
-> doses.** No health tracking, AI, caregiver or emergency functionality has
-> been built.
+> doses.** It reminds and records; it does not advise. It records symptoms so
+> they can be described to a clinician, and never works out what is causing
+> them. No AI assistant, caregiver or emergency functionality has been built.
 
 ---
 
@@ -30,18 +35,28 @@ How Nura is built, what exists today, and what is genuinely proven to work.
 Three things are true at once, and mixing them up would be the easiest way to
 misread this project.
 
-**Verified by running it.** The backend, its database schema and its rules: 155
-tests against a real PostgreSQL database with the real migrations applied. The
-app: 289 tests, including the real Today and Health screens mounted and driven,
-the whole pairing flow against a simulated robot that speaks the real protocol,
-and the offline check-in queue from submission to sync. Email sign-in was
-exercised end to end during PRD 1.
+**Verified by running it.** The backend, its database schema and its rules:
+301 tests against a real PostgreSQL database with the real migrations applied,
+including both daylight-saving transitions, the robot's medication route driven
+with a real device token, and the symptom authorization chain walked at every
+depth. The app: 587 tests, including the real Today, Health, medication and
+symptom screens mounted and driven, a symptom described from scratch and saved,
+the guided conversation driven turn by turn, the whole pairing flow against a
+simulated robot that speaks the real protocol, and all three offline queues from
+submission to sync. Email sign-in was exercised end to end during PRD 1.
 
-Neither Today nor the health record needs a robot, and that is tested rather
-than asserted: the Health overview test runs on an account with no device at
-all and checks that the screen loads without a single device request, while
+None of Today, the health record, the medication system or the symptom system
+needs a robot, and that is tested rather than asserted: the Health overview test
+runs on an account with no device at all and checks the screen loads without a
+single device request, the medication and symptom tests never touch a radio, and
 Today's three connection states are produced by the same `last_seen_at` field a
 real robot writes, which a development script writes directly.
+
+**One thing became testable in PRD 6 that was not before.** Every field on the
+symptom form writes into a Zustand store rather than into local component state,
+and a store update does re-render under React 19 — so that form is driven the way
+a user drives it, typing included. The health and schedule forms are still in the
+older position described in section 7.
 
 **Verified by construction, not by running.** The firmware compiles for three
 build configurations, and its cryptography matches RFC 9382's published test
@@ -50,8 +65,25 @@ does not prove a radio works.
 
 **Not verified at all.** Everything involving hardware. **The robot has not
 been built.** No BLE connection, Wi-Fi provisioning, device claim or heartbeat
-has ever happened between a real phone and a real board. The app has never run
-on a phone. Google, Apple and phone sign-in are implemented but unexercised.
+has ever happened between a real phone and a real board, and no robot has ever
+confirmed a dose by voice — that route is a real, tested contract with nothing
+on the other end of it. **No notification has ever been delivered by a phone:**
+the reminder service is tested against a recording stub, and
+`expo-notifications` has never run on a device. **No symptom photo has ever been
+taken on a phone:** the picker and the compression step run through
+`expo-image-picker` and `expo-image-manipulator`, neither of which has an
+implementation under Jest, so what is proven is the upload contract, the type
+sniffing, the authorization chain, the deletion of both object and row, and the
+queue that holds a photo until it can be sent. The app has never run on a phone.
+Google, Apple and phone sign-in are implemented but unexercised.
+
+**Built, tested and deliberately switched off:** the symptom red-flag rules. PRD 6
+section 44 permits urgent-care safety-netting only with a reviewed rule set, and
+nothing here has been reviewed by a clinician, so
+`symptom_red_flag_rules_enabled` defaults to False and the only thing a running
+deployment says about a symptom is the generic worsening sentence. The rules are
+written down and exercised by the tests so a later review has something real to
+review.
 
 Nothing in the product simulates success to cover a gap: an unconfigured auth
 provider says so, and the app refuses to report a robot online until the
@@ -124,6 +156,21 @@ database, so a database blip cannot make the app's connection indicator lie.
 | `GET /api/v1/profiles/{id}/health-summary` | app | counts and completeness, never names |
 | `GET|PATCH /api/v1/profiles/{id}/health-setup` | app | resume point, and blood type |
 | `GET|POST|PATCH|DELETE /api/v1/profiles/{id}/{records}` | app | the six health record types |
+| `GET|POST|PATCH|DELETE /api/v1/profiles/{id}/medication-schedules` | app | when to remind, and pausing |
+| `GET /api/v1/profiles/{id}/medication-doses` | app | history, and today's doses |
+| `POST .../medication-doses/{id}/taken|snooze|skip` | app | the three actions |
+| `GET /api/v1/profiles/{id}/medication-adherence` | app | one figure, with its counts |
+| `GET|PATCH|POST /api/v1/profiles/{id}/medication-supply` | app | counts, thresholds, refills |
+| `GET|POST /api/v1/profiles/{id}/symptoms` | app | episodes, and creating one with its first entry |
+| `GET /api/v1/profiles/{id}/symptoms/summary` | app | active, worsening and recent counts |
+| `GET|PATCH|DELETE /api/v1/profiles/{id}/symptoms/{id}` | app | one episode with its history |
+| `POST .../symptoms/{id}/resolve`, `.../recur` | app | ending a symptom, and one that came back |
+| `GET|POST .../symptoms/{id}/entries` | app | observations, newest first |
+| `PATCH|DELETE .../entries/{id}` | app | correcting or removing one |
+| `POST .../entries/{id}/photos` | app | multipart upload, private |
+| `GET .../photos/{id}/content` | app | the bytes, re-authorized per request |
+| `DELETE .../photos/{id}` | app | removes the object and the row |
+| `POST /api/v1/device-actions/medication-doses/{id}/taken` | robot | the future voice confirmation |
 
 ### Rules the server enforces
 
@@ -160,6 +207,48 @@ These are server-side because a client cannot be trusted to enforce them:
   it in.
 - **A date keeps its precision.** A condition or procedure may carry an exact
   date *or* a year, never both; the database enforces it.
+- **A reminder is a wall-clock time.** A schedule carries its own IANA zone, so
+  8am stays 8am across a daylight-saving change. The two awkward days a year
+  are decided, not left to chance: one dose either way.
+- **An action sets a state on one row.** Taken, Snooze and Skip update the
+  dose rather than appending an event, so a retried request leaves one taken
+  dose and decrements supply once, and a late Taken keeps the same dose.
+- **A robot never overrides a person.** A `robot_voice` confirmation on a dose
+  somebody already recorded changes nothing and errors at nobody.
+- **Editing the future never edits the past.** A schedule change rebuilds
+  doses from now forward and cannot reach one already recorded; deleting a
+  schedule clears the link on its doses rather than cascading.
+- **A medication with dose history cannot be deleted**, only marked inactive —
+  which pauses its schedules and keeps everything recorded.
+- **A symptom is never a condition.** They are separate tables, nothing converts
+  between them, and their counts are reported separately so a summary cannot
+  imply a diagnosis.
+- **Nothing infers that a symptom has ended.** A status changes because somebody
+  changed it, and resolving records when — a CHECK constraint makes
+  `status = 'resolved'` imply a `resolved_at`.
+- **A symptom that comes back is a new linked episode**, not a reopened one, so
+  each bout keeps its own onset and history. Asking for a recurrence of an
+  ongoing episode is a 409.
+- **A client cannot claim a reserved source.** Only `manual_app` and
+  `guided_app` are writable; `robot_voice_future` and the rest are readable and
+  refused on input.
+- **A retry cannot create a second record.** Entries, episodes and photo uploads
+  are all keyed by a client-generated id that is unique per scope in the
+  database, so idempotency is a constraint rather than a convention. A replay
+  returns the stored row **unchanged** — a retry is not an edit.
+- **Worsening is recorded, never inferred.** It comes from the user choosing it,
+  their own severity rising by two or more across two saved entries, or an
+  associated symptom they added. There is no branch on an absolute severity
+  anywhere: 10/10 alone is not an emergency.
+- **A hedged or denied phrase suppresses a safety rule.** Matching subtracts
+  `uncertain_items` and `negated_items` before anything can fire, so "I'm not
+  sure if I'm short of breath" is not a report of breathlessness.
+- **The urgent-care rules are off.** `symptom_red_flag_rules_enabled` defaults to
+  False; with it off, the only thing said is the generic worsening sentence.
+- **A symptom photo has no URL.** `storage_key` never appears in a response, and
+  the bytes come only from a route that re-checks the account, the profile, the
+  episode, the entry and the photo. A declared content type is checked against
+  the file's own header.
 
 ### Data model
 
@@ -190,6 +279,30 @@ the health record (PRD 4)                  all owned by a profile, all
   procedures          medical_notes          never both. See
                                              docs/architecture/health-data.md
 
+medication scheduling (PRD 5)              a record is what a medication *is*;
+  medication_schedules    timezone, start   a schedule is when to remind. Doses
+    medication_schedule_times  time,        are rows generated 14 days ahead;
+                               weekday      schedule_id is SET NULL, not a
+  medication_doses        scheduled_for,    cascade, so deleting a schedule
+                          local_date,       keeps the history it produced.
+                          status, source    See
+  medication_supply       remaining,        docs/architecture/medication-system.md
+                          threshold
+
+symptom tracking (PRD 6)                   an episode is one *bout*: a symptom
+  symptom_episodes   name, body_site,        that comes back is a new episode
+                     status, three onset     linked through previous_episode_id
+                     precisions, resolved_at and carrying status `recurring`.
+    symptom_entries  recorded_at, severity,  Six list fields are jsonb defaulting
+                     change_state, the       to [], including what was denied and
+                     structured fields,      what was uncertain, so nothing reads
+                     negated/uncertain/      as more certain than it was said.
+                     context lists,          client_entry_id is unique per
+                     client_entry_id         profile: the idempotency key.
+      symptom_photos storage_key (unique,    The bytes are not in the database.
+                     never returned),        See
+                     content_type, byte_size docs/architecture/symptom-system.md
+
 daily_checkins (one person, one day)       dashboard_preferences
   profile_id      not the account            profile_id
   checkin_date    a plain local date         card_key    no CHECK: the registry
@@ -199,15 +312,25 @@ daily_checkins (one person, one day)       dashboard_preferences
   device_id
 ```
 
-Value sets (`theme`, `setup_mode`, `onboarding_status`, `age_range`, `role`,
-`provisioning_status`) are enforced by database CHECK constraints generated
-from the same Python tuples the API validates against, so the two cannot drift.
-No table holds medical information, and tests assert that.
+Every value set — themes and onboarding statuses through to dose windows,
+symptom statuses and change states — is enforced by a database CHECK constraint
+generated from the same Python tuple the API validates against, with an assertion
+at import time that the two still agree. They cannot drift.
+
+**None of the account or device tables holds medical information**, and a test
+asserts that. Medical data lives only in the health record, medication and symptom
+tables, all of which belong to a profile and cascade with it.
 
 Migrations: `098b6aa76259` (PRD 0), `cc6f6b33617e` (PRD 1), `8075d63c6b15`
-(PRD 2). The PRD 2 one was written by hand because Alembic reads a column
-rename as a drop plus an add; it round-trips up, down and up, and
-`alembic check` reports no drift from the models.
+(PRD 2), `4e26bcd716d6` (PRD 3), `26d6a128b39a` (PRD 4), `36e11e301614`
+(PRD 5), `4e1eed8b939b` (PRD 6). The PRD 2 one was written by hand because
+Alembic reads a column rename as a drop plus an add, and the PRD 4 one was edited
+to add three CHECK constraints on an existing table that autogenerate does not
+see; the rest are autogenerated and hand-documented. Every one round-trips up,
+down and up, and `alembic check` reports no drift from the models.
+
+The PRD 6 migration adds three tables and alters nothing: `medical_conditions` in
+particular is untouched, so no existing medical record can be affected by it.
 
 ---
 
@@ -229,12 +352,16 @@ mobile/
 │   ├── devices/[id].tsx       status, recovery, developer diagnostics
 │   ├── customize-today.tsx    show, hide and reorder Today's cards
 │   ├── health/                setup, sections, record forms, blood type
+│   ├── medications/           schedules, doses, history, supply, skip sheet
+│   ├── symptoms/              overview, log, Talk to Nura, review, history, detail
 │   └── connect-device.tsx     entry: existing robots, or "Find my Nura"
 └── src/
     ├── services/provisioning/ BLE transport, SPAKE2, payload, flow controller
     ├── services/checkins/     the offline check-in queue
     ├── services/dashboard/    card layout rules (pure functions)
     ├── features/health/       section specs, form logic, API, hooks, drafts
+    ├── features/medications/  schedule rules, dose wording, reminders, queue
+    ├── features/symptoms/     shared draft, conversation engine, photos, queue
     ├── services/auth/         Supabase, chunked secure-store session
     ├── services/api/          typed client and endpoints
     ├── components/            Screen, Card, Button, ProgressSteps, …
@@ -272,6 +399,57 @@ form screen read that. Six hand-written CRUD screens would be six chances for
 a delete confirmation or a required-field message to drift, on the part of the
 app holding someone's medical history. The backend does the opposite and
 writes its routes out per resource — there the risk is obscurity, not drift.
+
+**Reminders are mirrored, not owned.** The backend holds the schedule and the
+history; the phone copies the next 48 waiting doses into the OS scheduler and
+reconciles that copy whenever anything changes. Unchanged reminders are left
+alone, moved ones are cancelled and re-created, and an empty plan cancels
+everything — which is how a pause, a deletion, an inactivated medication and a
+time change all work without a special case each. There are deliberately no
+notification action buttons: acting on one would need a background handler
+this app cannot promise on both platforms, so tapping a reminder opens Nura
+where the buttons are real.
+
+**A dose action made with no signal is not lost either.** It is written to the
+device and the row says so, and the queue holds one answer per dose rather
+than a log of taps — pressing Taken then Skip sends one final answer, because
+the server holds one row per dose.
+
+**One draft serves both symptom flows.** The manual form and the guided
+conversation write into the same `SymptomDraft`, validate through the same
+function, build the same payload and end on the same review screen. The only
+difference is the `source` recorded, which is an observation about how the data
+arrived rather than a different kind of data — so there is nowhere for either flow
+to put something the other cannot read.
+
+That draft lives in a Zustand store persisted to AsyncStorage, which buys three
+things: it survives navigating between the form, the conversation and the review
+screen; it survives the app being closed, which is what PRD 6 section 59 asks for;
+and it makes the form testable, because a store update re-renders under React 19
+where a local `useState` update from a fired event does not.
+
+**The guided conversation is a pure function.** `(state, draft, message) ->
+(state, draft)`, with the vocabulary, the extraction rules and the next-question
+logic in four files and no network, model or component state anywhere. That is
+what lets PRD 6 section 28's hard requirement — never ask again for something
+volunteered — be asserted in three lines rather than inferred from a screenshot.
+
+What the rules miss is not lost: an answer matching no pattern is kept verbatim
+for whatever question was asked, and everything is shown on a review screen where
+any field can be corrected. Without that screen a rule-based extractor would not
+be shippable; with it, the vocabulary makes the conversation shorter when it works
+and harmless when it does not.
+
+**A symptom saved with no signal keeps its photos.** One pending record holds the
+episode body (or an episode id), the entry and the local photo files. Photos are
+uploaded one at a time *after* the description lands, and any that fail stay in
+the record with the now-known episode and entry ids — so the retry uploads rather
+than creating anything twice. Nothing is reported as uploaded before the backend
+confirms it.
+
+**A symptom photo is fetched with a token, not a URL.** The image source is the
+API route plus an `Authorization` header, so the backend re-checks the whole
+ownership chain for every byte and a URL that leaked somewhere would be useless.
 
 **The provisioning flow is a controller, not a screen.** `ProvisioningFlow`
 owns the BLE connection, the verified session and the polling, with Bluetooth
@@ -391,8 +569,8 @@ deferred.
 
 | Suite | Count | Runs against |
 | ----- | ----- | ------------ |
-| Backend (`pytest`) | 155 | real PostgreSQL, real migrations, genuinely signed ES256 tokens |
-| Mobile (`jest`) | 289 in 32 suites | pure logic, the real Today and Health screens, and the flow against a simulated robot |
+| Backend (`pytest`) | 301 | real PostgreSQL, real migrations, genuinely signed ES256 tokens |
+| Mobile (`jest`) | 587 in 60 suites | pure logic, the real Today, Health, medication and symptom screens, and the flow against a simulated robot |
 | Firmware (`pio test`) | 10, **never executed** | the ESP32 itself — needs a board |
 
 What the tests actually pin down:
@@ -422,9 +600,9 @@ What the tests actually pin down:
   newer one; an answer the server would always refuse is dropped rather than
   retried forever. Server-side, one account cannot read or change another
   profile's check-in or layout.
-- **Nothing hard-codes a colour.** A test reads every Today and Health
-  component and fails on a hex literal, so Dark mode cannot be broken by a
-  stray value.
+- **Nothing hard-codes a colour.** A test reads every Today, Health and
+  medication component and fails on a hex literal, so Dark mode cannot be
+  broken by a stray value.
 - **Medical records belong to the right person.** Every one of the six record
   types is checked, in both directions: full CRUD for the owner, and 404 on
   every verb for anyone else — including on `POST`, so a stranger cannot even
@@ -436,8 +614,69 @@ What the tests actually pin down:
   values and asserts none of them appears in the health-summary response.
 - **Nothing is deleted silently.** The delete confirmation is asserted: its
   wording, its two buttons, and that no request is made until it is confirmed.
+- **8am stays 8am.** The recurrence rules are tested across a real
+  daylight-saving change, and both awkward days — a local time that does not
+  exist, and one that happens twice — produce exactly one dose. Changing a
+  schedule's time zone is asserted not to duplicate a day.
+- **A dose cannot be doubled or lost.** Taken twice leaves one taken dose and
+  one supply decrement; a dose taken hours late keeps the same row; an offline
+  action is queued, replayed, and refused if a newer answer exists.
+- **A robot cannot reach what is not its own.** The device route is exercised
+  with a real device token: it records `robot_voice`, it never overrides what
+  the person recorded, another account's device gets 404, a device with no
+  profile gets 404, and a user's token gets 401.
+- **The copy is asserted, not just written.** Missed-dose wording carries no
+  guilt language, the adherence sentence never grades the figure, and the only
+  sentence approaching advice points at a clinician. For symptoms, a test reads
+  every sentence Nura can say and fails on a named condition, a likelihood, an
+  attribution of cause or an instruction about medication.
+- **The guided conversation does not repeat itself.** PRD 6 section 28's own
+  example sentence is fed to the engine, and the test asserts that the symptom,
+  the site, the character, the onset and the severity are all captured and none of
+  them is asked about. A separate test drives the whole flow skipping every
+  question and asserts no question is offered twice.
+- **A hedge is not a fact, and a denial is not a symptom.** "No nausea" lands in
+  `negated_items`; "I might have felt dizzy" lands in `uncertain_items`; "I'm not
+  sure if it spreads" is not read as a denial. Both suppress a safety rule even
+  when the rules are switched on for the test.
+- **Severity 10 on its own is not an emergency.** Asserted directly, because PRD 6
+  section 78 rules it out and it would be an easy thing to add later by accident.
+- **The urgent rules are off, and work when turned on.** One test asserts a
+  confirmed red-flag phrase produces only the generic notice in the shipped
+  configuration; another enables the setting and asserts the rule fires. So the
+  architecture is real and the default is inert.
+- **A symptom cannot be duplicated by a retry.** The same `client_entry_id` sent
+  twice produces one entry and a `created: false`, and a replay does not overwrite
+  the stored values. The same is asserted for creating an episode and for
+  uploading a photo.
+- **A symptom saved offline keeps everything.** The description, the structured
+  fields and the local photo files are all still on the device, and a photo that
+  fails after the description landed is kept against the entry it belongs to
+  rather than re-creating the episode.
+- **A photo is private, and is really deleted.** The upload response carries no
+  storage key; the content route serves the bytes to the owner and 404s for
+  everybody else; deleting removes the file from storage as well as the row, and
+  deleting an entry or an episode purges the objects under it.
+- **A mislabelled upload is refused.** A text file declared as a PNG, and a PNG
+  declared as a JPEG, are both rejected on the bytes rather than the label.
+- **Symptoms do not move the completeness figure.** Logging one leaves the health
+  profile's percentage and its seven sections exactly as they were.
+- **A symptom that came back is a separate bout.** The recurrence is a new episode
+  with a link to the old one, the old one keeps its own resolution and entries, and
+  asking for a recurrence of an ongoing symptom is refused.
 
 Also clean: `tsc`, ESLint, Prettier, Ruff, mypy.
+
+**Known gap:** no notification has ever been delivered by a phone —
+`expo-notifications` is replaced by a recording stub, so what is proven is
+which reminders the service decides to schedule and cancel, not that the OS
+fires them.
+
+**Known gap:** no symptom photo has ever been chosen on a phone.
+`expo-image-picker` and `expo-image-manipulator` have no implementation under
+Jest, so the picking, the compression and the permission prompts are untested.
+Everything downstream of them — the upload, the type sniffing, the authorization,
+the deletion, the offline queue — is tested with real bytes.
 
 **Known gap:** interactions that only move a screen's *local* state have no
 tests. Under React 19 + RNTL 14, a local `useState` does not re-render in Jest
@@ -446,6 +685,25 @@ check-in is tested (it travels through TanStack Query, which does re-render),
 but pressing **Change** to reopen the chooser, typing a note, and the show/hide
 and reorder controls on Customize Today are not. The logic behind each of them
 is tested directly, and every rule they depend on is covered server-side.
+
+PRD 6 works around this rather than living with it: the symptom draft and the
+conversation are in a Zustand store, which does re-render, so **the symptom form
+is driven the way a user drives it — typing included** and the conversation is
+advanced turn by turn on a real screen. The one thing still out of reach there is
+the conversation's own text box, which holds its draft message in local state; the
+function the Send button calls is exercised directly instead.
+
+The same limitation also caught a genuine bug worth recording: a press that
+arrives before a store update has re-rendered lands on a button still drawn as
+disabled and correctly does nothing. Tests now wait for the *button* to become
+enabled rather than for the store, which is what a person does anyway.
+
+**A note on component-level tests.** React Native Testing Library's bare `render`
+does not return usable queries under this project's React 19 pairing, and its
+`screen` is not populated by it either. Everything is therefore driven through
+`renderRouter`, on real screens — which is a better test, and the reason the
+accessibility assertions for the severity and change-state controls live on
+`/symptoms/log` rather than in isolation.
 
 ---
 
@@ -500,16 +758,52 @@ Two things that catch people out:
    a blood type, turn airplane mode on mid-form and confirm what you typed
    survives, then check the screen reader on the form fields and the delete
    confirmation.
+6. Walk through medications by hand, which is the one area with something a
+   simulator cannot prove: create a daily schedule and a multiple-time one,
+   confirm a real notification arrives, mark Taken from the notification's
+   screen, Snooze, Skip with and without a reason, go offline and record a
+   dose then reconnect, edit a schedule and confirm history survives, pause
+   and resume, mark a medication inactive, enable refill tracking and watch
+   the count fall only on Taken, restart the app and confirm the reminders
+   rebuild, then check Light/Dark/System, larger text and the screen reader on
+   the dose buttons. `scripts/seed_dev.py --medications demo` sets up every
+   state worth looking at.
+7. Walk through symptoms by hand: log one manually and one through Talk to Nura,
+   volunteer several fields in the first message and confirm nothing is asked
+   again, leave the irrelevant fields blank, edit something on the review screen,
+   save, add a follow-up, mark worsening and then improving, resolve it, record a
+   recurrence, attach a photo from the camera and from the library, confirm the
+   permission prompts read sensibly and that declining still lets the symptom
+   save, remove a photo, go offline and create a symptom with a photo then
+   reconnect, and check Light/Dark/System, larger text and the screen reader on the
+   severity scale and the conversation bubbles.
+   `scripts/seed_dev.py --symptoms demo` sets up every state worth looking at
+   except the offline one, which only exists on a phone.
 
 **Deferred by choice** (documented, not started): delivering the daily
-check-in reminder — the preference is recorded, but nothing schedules a
-notification; the spoken introduction clip — a chime stands in for
-"Hi. I'm Nura."; a CA bundle so the robot can use HTTPS; ownership transfer and release; QR-code pairing fallback; profile photo
-upload; account-linking UI; the animated face; translations.
+check-in reminder — the preference is recorded, and the notification service
+PRD 5 built is where it will eventually be scheduled; every-N-hours medication
+schedules, which PRD 5 permits only if the recurrence is reliable and well
+tested; the privacy option that hides medication names on a lock screen — the
+reminder body is built so it is a flag rather than a rewrite; filtering
+history by medication in the UI, which the API already supports; the spoken
+introduction clip — a chime stands in for "Hi. I'm Nura."; a CA bundle so the
+robot can use HTTPS; ownership transfer and release; QR-code pairing fallback;
+profile photo upload; account-linking UI; the animated face; translations.
 
-**Out of scope until later PRDs:** health tracking, medications, appointments,
-AI conversation, caregiver permissions, emergency detection, notifications,
-HealthKit and Health Connect.
+PRD 6 adds three of its own. **The urgent-care safety rules are written, tested
+and switched off** until a clinician has reviewed the rule set and its wording;
+PRD 6 section 44 asks for exactly that, and turning them on is a clinical decision.
+**Flagging a symptom for follow-up** is the one Important Today input from section
+40 not implemented — the other two, an explicit worsening and a confirmed severity
+increase, are — because there is no flagging control in PRD 6's screen list and an
+episode marked worsening already surfaces. And **the Health timeline** that section
+79 offers as optional is not started: symptom history lives on the symptom screens,
+and a cross-feature timeline is its own piece of work.
+
+**Out of scope until later PRDs:** appointments and Prepare for Appointment, AI
+conversation, caregiver permissions, emergency detection, push notifications,
+doctor reports and PDF export, HealthKit and Health Connect.
 
 ---
 
@@ -524,9 +818,13 @@ HealthKit and Health Connect.
 | [0005](docs/decisions/0005-ble-pairing.md) | react-native-ble-manager, and SPAKE2 for the pairing code |
 | [0006](docs/decisions/0006-today-and-offline-checkins.md) | One Today endpoint, a card registry, and how an offline check-in is settled |
 | [0007](docs/decisions/0007-health-record-foundation.md) | Health records belong to a profile, dates keep their precision, provenance is the server's |
+| [0008](docs/decisions/0008-medication-scheduling.md) | A schedule carries its zone, doses are rows, an action sets a state, and editing never touches the past |
+| [0009](docs/decisions/0009-symptom-tracking.md) | An episode is a bout, both flows share one draft, uncertainty suppresses escalation, and the urgent rules ship disabled |
 
 Further reading: [system overview](docs/architecture/system-overview.md),
 [health data](docs/architecture/health-data.md),
+[the medication system](docs/architecture/medication-system.md),
+[the symptom system](docs/architecture/symptom-system.md),
 [API reference](docs/api/README.md),
 [provisioning protocol](docs/device/provisioning-protocol.md),
 [firmware](firmware/xiao_esp32s3/README.md),

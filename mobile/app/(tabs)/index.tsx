@@ -18,6 +18,11 @@ import {
   ImportantTodaySection,
   OfflineBanner,
 } from '../../src/components/today';
+import {
+  useMedicationReminderRefresh,
+  useSyncPendingDoseActions,
+} from '../../src/features/medications/hooks';
+import { useSyncPendingSymptoms } from '../../src/features/symptoms/hooks';
 import { useIsOffline } from '../../src/hooks/useNetworkStatus';
 import {
   usePendingCheckIn,
@@ -40,6 +45,11 @@ export default function TodayScreen() {
   const submit = useSubmitCheckIn();
   // Sends anything queued, on focus and when the connection returns.
   useSyncPendingCheckIn();
+  // The same, for doses recorded from the Today card while offline
+  // (PRD 5, section 62).
+  useSyncPendingDoseActions();
+  // And for a symptom described while offline (PRD 6, section 59).
+  useSyncPendingSymptoms();
   useRefreshOnFocus(today.refetch, today.dataUpdatedAt);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -56,6 +66,12 @@ export default function TodayScreen() {
   const isSaved = today.data === undefined && saved !== null;
 
   const preferredName = summary?.profile?.preferredName ?? null;
+
+  // Reinstalled, new phone, or simply closed for a week: whoever has
+  // schedules gets their local reminders rebuilt from the server's doses
+  // (PRD 5, sections 43 and 55). Nothing is fetched for anybody who has not
+  // set a reminder up.
+  useMedicationReminderRefresh(summary?.medications?.hasSchedules ?? false);
 
   /**
    * An answer saved on this phone wins over the server's, because it is what
@@ -109,6 +125,15 @@ export default function TodayScreen() {
             cards={summary.cards}
             context={{
               device: summary.device,
+              // Carried by the Today response itself, so the card costs no
+              // extra request (PRD 5, section 53). A cached summary keeps its
+              // medications: unlike the robot's presence, a dose that was due
+              // an hour ago is still due, and recording it offline is exactly
+              // what the queue is for (PRD 5, section 62).
+              medications: summary.medications,
+              // The same reasoning: a symptom somebody logged yesterday is
+              // still what they logged, so the cached copy is worth showing.
+              symptoms: summary.symptoms,
               // Offline we genuinely do not know whether the robot is
               // connected, and a cached "Online" would break the rule that
               // presence only ever comes from the backend.

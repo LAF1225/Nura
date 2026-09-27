@@ -18,6 +18,7 @@ project required.
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import jwt
@@ -32,6 +33,7 @@ from app.core.config import get_settings
 from app.core.security import SUPABASE_AUDIENCE, SupabaseJwksVerifier
 from app.db.session import get_db
 from app.main import app
+from app.services.storage import get_object_store
 
 TEST_DATABASE_NAME = "nura_test"
 TEST_ISSUER = "https://nura-test.supabase.co/auth/v1"
@@ -74,7 +76,10 @@ def engine() -> Iterator[sa.Engine]:
     with test_engine.begin() as connection:
         connection.execute(
             sa.text(
-                "TRUNCATE medical_conditions, medications, allergies, "
+                "TRUNCATE symptom_photos, symptom_entries, symptom_episodes, "
+                "medication_doses, medication_schedule_times, "
+                "medication_schedules, medication_supply, "
+                "medical_conditions, medications, allergies, "
                 "clinicians, procedures, medical_notes, "
                 "daily_checkins, dashboard_preferences, "
                 "provisioning_sessions, account_profile_roles, profiles, "
@@ -200,3 +205,22 @@ def unconfigured_client(db: Session) -> Iterator[TestClient]:
 def auth_headers(make_token) -> dict[str, str]:
     """Authorization header for a fresh, valid account."""
     return {"Authorization": f"Bearer {make_token()}"}
+
+
+@pytest.fixture(autouse=True)
+def media_root(tmp_path, monkeypatch) -> Iterator[Path]:
+    """Points private media at a throwaway directory, for every test.
+
+    Autouse on purpose: a symptom-photo test that wrote into the real
+    ``backend/.private-media`` would leave images on the developer's disk, and
+    somebody else's test run would then find them. Pointing the setting at
+    ``tmp_path`` means the bytes go away with the test.
+
+    ``get_object_store`` caches the store it built, so the cache is cleared on
+    both sides of the yield.
+    """
+    root = tmp_path / "media"
+    monkeypatch.setattr(get_settings(), "private_media_root", str(root))
+    get_object_store.cache_clear()
+    yield root
+    get_object_store.cache_clear()

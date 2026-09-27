@@ -5,6 +5,8 @@
  * field by field, so a malformed body becomes an `ApiError` rather than a
  * screen rendering `undefined` (the same approach as `devices.ts`).
  */
+import { parseTodayMedications } from '../../features/medications/api';
+import { parseTodaySymptoms } from '../../features/symptoms/api';
 import type { ConnectionStatus } from '../../types/device';
 import type {
   DashboardCard,
@@ -173,6 +175,11 @@ export function parseTodaySummary(raw: unknown): TodaySummary {
     dailyCheckIn: parseCheckInState(body.daily_checkin),
     device: parseDevice(body.device),
     cards: parseCards(body.cards),
+    // Parsed by the medication feature rather than here, so the one place
+    // that knows a dose's shape is the one place that reads it
+    // (PRD 5, section 53).
+    medications: parseTodayMedications(body.medications),
+    symptoms: parseTodaySymptoms(body.symptoms),
     important: parseImportant(body.important),
   };
 }

@@ -3,17 +3,19 @@
 Nura is a desktop health companion: a small robot built around a Seeed Studio
 XIAO ESP32-S3, a cross-platform mobile app, and a backend service.
 
-This repository is at **PRD 4 — Medical Profile & Health Record Foundation**.
-It is a real everyday app rather than a setup utility: a branded five-tab app
-with Light/Dark/System themes, account creation and onboarding, a Today screen
-with a daily wellbeing check-in and configurable cards, a structured health
-record, a FastAPI backend, and the firmware and app flow for connecting a
-robot.
+This repository is at **PRD 6 — Symptom Tracking & Structured Symptom
+Communication**. It is a real everyday app rather than a setup utility: a branded
+five-tab app with Light/Dark/System themes, account creation and onboarding, a
+Today screen with a daily wellbeing check-in and configurable cards, a structured
+health record, medication reminders with offline-safe Taken / Snooze / Skip,
+symptom tracking with a guided conversation and private photos, a FastAPI
+backend, and the firmware and app flow for connecting a robot.
 
-> **Nothing in PRD 3 or PRD 4 needs the robot.** Today works with no robot
-> linked, with one that is offline, and with one the backend has heard from —
-> and a seeding script reaches all three states without hardware. The entire
-> health record works with no robot at all. See sections 8 and 9.
+> **Nothing in PRD 3 to PRD 6 needs the robot.** Today works with no robot
+> linked, with one that is offline, and with one the backend has heard from — and
+> a seeding script reaches all three states without hardware. The health record,
+> the medication system and the whole symptom system work with no robot at all,
+> and none of them involves speech recognition. See sections 8 to 11.
 
 > **The robot has not been built yet.** The pairing flow, the firmware and the
 > backend are written and tested as far as software allows — the cryptography
@@ -21,8 +23,10 @@ robot.
 > provisioning or device registration has ever run on hardware.
 
 > **Nura does not diagnose illness, prescribe treatment or change medication
-> doses.** No health tracking, AI, caregiver or emergency functionality exists
-> at this stage.
+> doses.** It reminds and records; it does not advise. It records symptoms so
+> they can be described to a clinician, and it never works out what is causing
+> them. No AI assistant, caregiver or emergency functionality exists at this
+> stage.
 
 ## Contents
 
@@ -445,7 +449,282 @@ the Health tab is where people look for this, and Today stays calm unless
 asked. Turn it on in **More → Customize Today**. It shows a percentage and a
 way in, never a condition or medication name.
 
-## 10. Run the tests
+## 10. Medication reminders
+
+Care is where medication *management* lives: schedules, what is due today,
+Taken / Snooze / Skip, history, adherence and refills. Health keeps the
+medication record itself — what the medication is — and links across to here.
+
+```text
+Health = what the medication is
+Care   = when to be reminded about it
+```
+
+**None of it needs the robot.** Reminders are local notifications from the
+phone, and every feature works with no robot linked. The one robot-facing
+route is described at the end of this section.
+
+### Setting one up
+
+Add a medication in **Health → Medications**, then **Care → Medications → Set
+up reminders** and choose it. A schedule is "every day" or "on selected days",
+with one or more times, a start date and an optional end date. There is
+deliberately nowhere to express a taper, a sliding scale or a calculated
+dose — those belong to a clinician.
+
+Notification permission is asked for at that moment and nowhere earlier, so
+the prompt arrives with an obvious reason. Declining is handled honestly: the
+schedule still exists and the app still shows what is due; only the phone's
+alert is off.
+
+### What happens at a dose
+
+Every scheduled dose offers **Taken**, **Snooze** (10, 30 or 60 minutes, up to
+three times) and **Skip** (with an optional reason, which Nura records and
+never interprets). Two hours after it was due, an unrecorded dose becomes
+*missed* — which reads as "Wasn't marked as taken", because it is a fact and
+not a reprimand. Taking it afterwards keeps the same dose and records when it
+actually happened.
+
+Sending an action twice is harmless. A dose is one row and an action sets its
+state, so a retried request leaves one Taken and takes one off the supply
+count, not two.
+
+### Time zones
+
+A schedule carries the time zone it was made in, so 8am stays 8am across a
+daylight-saving change. The two awkward days a year are decided rather than
+left to chance: a local time that does not exist produces one dose, and one
+that happens twice produces one dose. Changing a schedule's zone regenerates
+its future doses, so travelling cannot double a day.
+
+### Offline
+
+If the phone cannot reach the backend, the action is saved on the device and
+the row says so. It is sent when a medication screen is focused or the
+connection returns. The queue holds one answer per dose — pressing Taken then
+Skip sends one final answer — and the most recent explicit action wins if the
+same dose was recorded somewhere else meanwhile.
+
+### Refills
+
+Supply tracking is off until you turn it on per medication. Nura takes one off
+the count when a dose is marked Taken, never on Snooze or Skip, and warns at a
+threshold you choose. The number is yours: Nura shows it back with "about",
+never estimates how long it will last, and never suggests ordering anything.
+
+### Seeing it filled in without waiting a week
+
+From `backend/`, with the virtualenv active:
+
+```bash
+python -m scripts.seed_dev --account latest --medications demo
+```
+
+```bash
+python -m scripts.seed_dev --account latest --medications empty
+```
+
+`demo` builds every state worth looking at: a dose due now, an overdue one,
+taken, skipped and missed doses behind them, a paused schedule, an inactive
+medication, a medication with no schedule at all, and a supply that is running
+low. `--timezone Europe/London` puts the fixture times in a chosen zone. As
+with the other fixtures, the script refuses to run unless `APP_ENV=development`
+and nothing in the app can reach it.
+
+If a schedule is left running for days, this keeps everybody's doses current
+the way a deployment's cron would:
+
+```bash
+python -m scripts.medication_maintenance
+```
+
+Nothing depends on it: opening the app replenishes that person's doses anyway.
+
+### The Today card
+
+PRD 5 makes the **Medications** card real, and it is **on by default** — a
+dose that is due is the single most useful thing Today can show. It draws
+nothing at all for anybody with no schedules, so it is invisible until it is
+relevant. An overdue dose also appears in Important Today, worded plainly and
+never as an emergency.
+
+### The future robot action
+
+When the robot eventually hears "I took it", it will call:
+
+```http
+POST /api/v1/device-actions/medication-doses/{dose_id}/taken
+Authorization: Bearer <device token>
+```
+
+That contract exists now and is tested with a seeded device token. It is
+authenticated by the robot's own device token — the robot never holds a user's
+credentials — the dose must belong to the profile the device is linked to, and
+it can never override what the person recorded themselves. **No part of it has
+run on hardware, and no voice recognition exists.**
+
+To exercise it during development:
+
+```bash
+python -m scripts.seed_dev --account latest --device-token
+```
+
+There is no pretend-robot button anywhere in the app, and there never will be.
+The full design is in
+[docs/architecture/medication-system.md](docs/architecture/medication-system.md).
+
+## 11. Symptoms
+
+Health is where symptoms live: what you are experiencing, in your own words, over
+time. It is kept firmly apart from Conditions, which is what a clinician has told
+you you have.
+
+```text
+Conditions = what you have been told you have
+Symptoms   = what you are experiencing, and how it changes
+```
+
+**None of it needs the robot, and none of it involves speech.** The
+"Talk to Nura" flow is a text conversation in the app.
+
+### Two ways to describe something
+
+Health → Symptoms offers two equal options:
+
+```text
+[ Talk to Nura ]   [ Log manually ]
+```
+
+Both fill the same draft, end on the same review screen, and save the same
+record. The only difference is which one you find easier to use.
+
+**Talk to Nura** is a short guided conversation. It is deterministic — a
+vocabulary and a set of rules, with no model behind it — and it reads everything
+a message says rather than only the answer to the question it asked. So this:
+
+> I have a sharp pain in my left knee that started yesterday and is 6/10
+
+fills the symptom, the location, the character, the onset and the severity, and
+Nura asks about none of them. It asks what is still missing, skips what makes no
+sense for the symptom — radiation for nausea, a location for a fever — and offers
+tap answers alongside the text box so the whole thing can be done without typing.
+
+**Log manually** is the same questions as one scrollable form. Only the first
+field is required; everything else says (optional) and means it.
+
+Either way you see everything before it is saved, and you can change any of it.
+That review screen is the reason a rule-based conversation is safe to ship:
+whatever the rules made of what you typed, you read it back in plain words first.
+
+### What gets recorded
+
+A **symptom** is an episode — one bout — and each time you write about it is an
+entry:
+
+```text
+Headache
+  25 Sep  3/10   started, throbbing, behind both eyes
+  26 Sep  4/10   about the same
+  27 Sep  6/10   getting worse, nausea, no vomiting
+```
+
+Adding an update asks only what can have changed: how bad it is, which way it is
+going, anything new alongside it, a note, a photo. It never makes you re-enter
+the description.
+
+Severity is 0 to 10, anchored as "no symptom" and "the worst you can imagine".
+Nura never turns your number into a word — "moderate" would be its judgement of
+your answer, not your answer.
+
+"No nausea" and "I might have felt dizzy" are kept as what they are. A summary
+that quietly dropped them, or read them as symptoms you have, would say more than
+you did.
+
+### When something ends, and when it comes back
+
+**Mark as ended** takes a symptom out of your active list and keeps everything you
+logged. It is not deletion, and Nura never decides on its own that a symptom is
+over — one nobody has updated for six weeks is still active.
+
+If it comes back, Nura starts a **new** record for this time round and links it to
+the old one. Each bout keeps its own start and its own history, so "how many times
+has this happened?" has an answer.
+
+Delete is there too, for something logged by mistake. The confirmation says what
+goes and points at the other option.
+
+### Photos
+
+Optional, for a rash, a swelling, a wound healing. They are private: stored on the
+backend behind a route that checks it is you on every single request, with no
+public link and no shareable URL anywhere. The app compresses them and strips the
+location metadata before uploading.
+
+**Nura does not look at them.** It does not classify a rash, assess a wound or
+identify an infection, and it says so on screen every time you attach one.
+
+### What Nura says back
+
+One sentence, and only when you have recorded a change yourself:
+
+> You have recorded this as worsening. If it keeps getting worse, becomes severe,
+> or is affecting what you can normally do, consider contacting a healthcare
+> professional.
+
+That is triggered by something you did — you chose "worsening", your own number
+went up by two or more, or you added a new symptom alongside it. A high number on
+its own is never enough.
+
+Nura does not diagnose, does not name a condition, does not guess a cause, does
+not call anybody and does not change anything about your medication. If you say
+something concerning and Nura is unsure it understood, it asks:
+
+> Just to confirm: are you saying you have severe difficulty breathing right now?
+
+Your answer is recorded as what it is — yes, no, or not sure. **The urgent-care
+rules that would act on a "yes" are written and tested but switched off**, because
+no clinician has reviewed them. Turning them on is a clinical decision, not a
+deployment one. Everything in this section that Nura can say lives in one file so
+it can be reviewed without touching any symptom code.
+
+### Offline
+
+Describe a symptom with no signal and it is saved on the phone, photos included,
+and sent when you are back online. The row says so until it has synced. Nothing
+is reported as uploaded before the backend confirms it, and a retry can never
+produce two copies.
+
+### Seeing it filled in without waiting a week
+
+From `backend/`, with the virtualenv active:
+
+```bash
+python -m scripts.seed_dev --account latest --symptoms demo
+```
+
+```bash
+python -m scripts.seed_dev --account latest --symptoms empty
+```
+
+`demo` builds a worsening headache with three entries, an improving knee with a
+photo, a resolved sore throat, and lower back pain that has recurred — which
+between them cover every state worth looking at. One thing it cannot build is an
+*offline pending* symptom: that only exists on a phone, so reach it by turning
+Wi-Fi off and saving one.
+
+### On Today
+
+The **Symptoms** card is on by default, and draws nothing at all until you have
+used the feature — most people have nothing to report most of the time. After
+that it shows what you most recently wrote about, with a way to add an update. A
+symptom you marked as worsening also appears in Today, worded plainly and never
+as an emergency.
+
+The full design, including the conversation engine and the safety boundary, is in
+[docs/architecture/symptom-system.md](docs/architecture/symptom-system.md).
+
+## 12. Run the tests
 
 Mobile:
 
@@ -468,13 +747,25 @@ cd firmware/xiao_esp32s3
 ../.venv/Scripts/pio test -e xiao_esp32s3
 ```
 
-The mobile suite needs nothing running. It mounts the real Today screen and
-drives a check-in against a stubbed backend, covers the pairing flow end to end
-against a simulated robot that runs the real protocol, and checks the app's
-cryptography against RFC 9382's test vectors. One test parses the firmware's
-`protocol.h` and fails if the app and the robot disagree about any UUID,
-message type or status code; another reads the Today and Health components and
-fails if a colour has been written into one instead of coming from the theme.
+The mobile suite needs nothing running. It mounts the real Today, Health,
+medication and symptom screens and drives them against a stubbed backend — a
+check-in, a dose recorded as taken, a skip with a reason, a symptom described
+from scratch and saved — covers the pairing flow end to end against a simulated
+robot that runs the real protocol, and checks the app's cryptography against
+RFC 9382's test vectors. One test parses the firmware's `protocol.h` and fails if
+the app and the robot disagree about any UUID, message type or status code;
+another reads every Today, Health, medication and symptom component and fails if
+a colour has been written into one instead of coming from the theme.
+
+A few tests are about *wording*, which is unusual and deliberate: PRD 5 and PRD 6
+ask for neutral, non-judgemental copy and forbid anything that reads as medical
+advice, so those are asserted rather than left to whoever edits the strings next.
+One of them reads every sentence Nura can say about a symptom and fails on a
+named condition, a likelihood or an attribution of cause.
+
+The guided symptom conversation is tested as a pure function, which is how PRD 6's
+hardest requirement — never ask again for something the user already volunteered —
+is asserted directly rather than inferred from a screenshot.
 
 The backend suite **does need PostgreSQL running**. It creates a separate
 `nura_test` database on first run, applies the real migrations to it, and rolls
@@ -484,7 +775,7 @@ suite needs a Supabase project or a network connection: tokens are signed with
 a key pair generated inside the test run and verified by the real production
 verifier.
 
-## 11. Code quality
+## 13. Code quality
 
 ```bash
 cd mobile
@@ -550,7 +841,14 @@ string from the Supabase dashboard into `backend/.env` and run
 | `mobile/src/services/today/` | The saved copy of the last Today response       |
 | `mobile/src/features/health/` | Health section specs, form logic, API, drafts  |
 | `mobile/app/health/`      | Health setup, sections and record forms         |
-| `backend/scripts/`        | Development fixtures (never for production)     |
+| `mobile/src/features/medications/` | Schedule rules, dose wording, reminders, offline queue |
+| `mobile/app/medications/` | Schedules, doses, history, supply and the skip sheet |
+| `backend/app/services/medications/` | Recurrence, dose actions, supply, adherence |
+| `mobile/src/features/symptoms/` | The shared draft, the guided conversation, photos, offline queue |
+| `mobile/app/symptoms/`    | Overview, manual log, Talk to Nura, review, history, detail |
+| `backend/app/services/symptoms/` | Episodes, entries, photos, safety-netting, summary |
+| `backend/app/services/storage.py` | Private object storage for symptom photos |
+| `backend/scripts/`        | Development fixtures, and the medication maintenance job |
 | `backend/app/api/`        | HTTP routes (`/health`, `/api/v1/*`)            |
 | `backend/app/models/`     | SQLAlchemy models                               |
 | `backend/alembic/`        | Migrations                                      |
@@ -563,6 +861,12 @@ string from the Supabase dashboard into `backend/.env` and run
 - [System overview](docs/architecture/system-overview.md)
 - [Health data](docs/architecture/health-data.md) — who health records belong
   to, the authorization rule, and the privacy rules
+- [The medication system](docs/architecture/medication-system.md) — schedules,
+  time zones, dose generation, status transitions, reminders, offline
+  behaviour and the robot action contract
+- [The symptom system](docs/architecture/symptom-system.md) — episodes and
+  entries, the shared draft, the guided conversation, uncertainty handling,
+  photo privacy, offline behaviour and the safety boundary
 - [Safety and emergency architecture](docs/architecture/safety-and-emergency.md)
 - [API reference](docs/api/README.md)
 - [Provisioning protocol](docs/device/provisioning-protocol.md) — UUIDs,
@@ -575,7 +879,9 @@ string from the Supabase dashboard into `backend/.env` and run
   [Supabase Auth](docs/decisions/0004-supabase-auth.md),
   [BLE pairing](docs/decisions/0005-ble-pairing.md),
   [Today and offline check-ins](docs/decisions/0006-today-and-offline-checkins.md),
-  [Health record foundation](docs/decisions/0007-health-record-foundation.md)
+  [Health record foundation](docs/decisions/0007-health-record-foundation.md),
+  [Medication scheduling](docs/decisions/0008-medication-scheduling.md),
+  [Symptom tracking](docs/decisions/0009-symptom-tracking.md)
 
 ## Known issues
 
@@ -601,18 +907,40 @@ the server, the greeting buckets, the local-date rule and the offline queue —
 is covered directly in `mobile/tests/`, and every server-side rule is covered
 against a real database in `backend/tests/`.
 
-The health forms are in the same position: what a form *means* — the defaults
-a new record starts with, what is refused, what is actually sent, and how a
-year-only date survives the round trip — is tested directly and thoroughly,
-while typing into a field and watching it re-render is not. The delete
-confirmation *is* asserted, because it goes through a native alert rather than
-local state.
+The health and schedule forms are in the same position: what a form *means* —
+the defaults a new record starts with, what is refused, what is actually sent,
+how a year-only date survives the round trip, how "9am on Mon, Wed and Fri"
+becomes three rows and reads back as a sentence — is tested directly and
+thoroughly, while typing into a field and watching it re-render is not. The
+delete confirmations *are* asserted, because they go through a native alert
+rather than local state.
+
+**The symptom form is the exception**, and deliberately so. Every field on it
+writes into a Zustand store rather than into local component state, and a store
+update does re-render under React 19 — so that form is driven the way a user
+drives it, typing included. That was one of the reasons for putting the draft in
+a store.
 
 **Only email sign-in has been verified end to end.** Google, Apple and phone
 are implemented against the Supabase SDK and documented above, but marked
 unverified: Apple needs macOS or an iOS device plus a paid developer account,
 and phone needs a paid SMS provider. None of them simulate success — an
 unconfigured provider is reported as unavailable.
+
+**No symptom photo has ever been taken on a phone.** The picker and the
+compression step run through `expo-image-picker` and `expo-image-manipulator`,
+neither of which has a real implementation under Jest, so what is proven is the
+upload contract, the type sniffing, the authorization chain, the deletion of both
+object and row, and the offline queue that holds a photo until it can be sent.
+Choosing an image from a real camera roll, and the permission prompts around it,
+are on the by-hand list below.
+
+**No notification has ever been delivered by a phone.** The reminder service
+is tested against a recording stub — which doses it schedules, what they say,
+what it cancels when a schedule changes, and how it behaves when permission is
+refused — but `expo-notifications` has never run on a device, so nothing here
+claims a reminder has actually fired. That needs a development build on real
+hardware; see section 5.
 
 **The app has not been run on a physical device or emulator.** The bundle
 compiles and the suites pass, but no run on real hardware has happened yet.

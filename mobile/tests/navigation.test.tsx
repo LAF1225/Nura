@@ -38,7 +38,9 @@ afterEach(() => {
 /** Tab label -> the route it should open and copy unique to that screen. */
 const TAB_ROUTES: { label: string; path: string; content: RegExp }[] = [
   { label: 'Health', path: '/health', content: /health timeline, conditions/ },
-  { label: 'Care', path: '/care', content: /Schedules, appointments, routines/ },
+  // PRD 5 gave Care its first real section, so the placeholder sentence it
+  // used to be identified by has gone.
+  { label: 'Care', path: '/care', content: /Reminders, schedules and the people/ },
   { label: 'Nura', path: '/nura', content: /calm companion for everyday health/ },
   { label: 'More', path: '/more', content: /Light, Dark or System/ },
   { label: 'Today', path: '/', content: /Nothing needs your attention right now/ },

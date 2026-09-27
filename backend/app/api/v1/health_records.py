@@ -19,9 +19,9 @@ record without resubmitting everything else (PRD 4, section 27).
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 
-from app.api.deps import DbSession, OwnedProfile, http_error
+from app.api.deps import DbSession, Now, OwnedProfile, http_error
 from app.models import (
     Allergy,
     Clinician,
@@ -54,6 +54,7 @@ from app.schemas.health import (
 )
 from app.services import health
 from app.services.errors import DomainError
+from app.services.medications import schedules as schedule_service
 
 #: Mounted by `router.py` under `/api/v1`, so every path below begins
 #: `/api/v1/profiles/{profile_id}/…`.
@@ -61,6 +62,18 @@ router = APIRouter(prefix="/profiles/{profile_id}", tags=["health"])
 
 NO_CONTENT = status.HTTP_204_NO_CONTENT
 CREATED = status.HTTP_201_CREATED
+
+#: Refusing to delete a medication somebody has been taking (PRD 5, s40).
+MEDICATION_HAS_HISTORY = HTTPException(
+    status_code=status.HTTP_409_CONFLICT,
+    detail={
+        "code": "medication_has_history",
+        "message": (
+            "This medication has dose history. Mark it as no longer taken "
+            "instead, which keeps the record and everything you have logged."
+        ),
+    },
+)
 
 
 def _record[Record: HealthRecord](
@@ -152,16 +165,41 @@ def update_medication(
     payload: MedicationUpdate,
     profile: OwnedProfile,
     db: DbSession,
+    now: Now,
 ) -> Medication:
+    """Updates a medication record, and stops its reminders if it is retired.
+
+    Marking a medication as no longer taken pauses every schedule attached to
+    it, so nothing keeps reminding someone about a medication they have
+    stopped. The schedules are paused rather than deleted: marking it active
+    again is a common correction, and that should bring the reminders back
+    rather than make someone build them a second time (PRD 5, section 38).
+    Nothing recorded is touched, and no reason for stopping is inferred.
+    """
     record = _record(db, Medication, profile, record_id)
-    return health.update_record(
-        db, record, payload.model_dump(exclude_unset=True), "medications"
-    )
+    fields = payload.model_dump(exclude_unset=True)
+    retiring = record.is_active and fields.get("is_active") is False
+
+    updated = health.update_record(db, record, fields, "medications")
+    if retiring:
+        schedule_service.on_medication_inactivated(db, updated, now)
+        db.commit()
+    return updated
 
 
 @medications.delete("/{record_id}", status_code=NO_CONTENT)
 def delete_medication(record_id: uuid.UUID, profile: OwnedProfile, db: DbSession) -> None:
-    health.delete_record(db, _record(db, Medication, profile, record_id), "medications")
+    """Deletes a medication record, unless doses have been recorded against it.
+
+    A medication somebody has been taking is archived by marking it inactive,
+    not erased: deleting it would take their adherence history with it, and
+    PRD 5 section 40 is explicit that history must not be cascade-deleted
+    silently. A medication with no recorded doses deletes as it always did.
+    """
+    record = _record(db, Medication, profile, record_id)
+    if schedule_service.has_history(db, record.id):
+        raise MEDICATION_HAS_HISTORY
+    health.delete_record(db, record, "medications")
 
 
 # --- allergies --------------------------------------------------------------

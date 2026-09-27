@@ -21,7 +21,7 @@ body must not appear in a log, an error message or an analytics event
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -39,6 +39,7 @@ from app.models import (
 )
 from app.models.enums import HEALTH_SECTIONS
 from app.services.errors import NotFoundError
+from app.services.symptoms import summary as symptom_summary
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +223,13 @@ class HealthSummary:
     #: you ever taken" are different questions (PRD 4, section 22).
     active_conditions: int
     active_medications: int
+    #: Symptoms, kept as their own figures and never folded into the
+    #: condition counts: a symptom is what somebody is experiencing and a
+    #: condition is what they have been told they have, and a count that
+    #: blends the two is how a summary starts implying a diagnosis
+    #: (PRD 6, sections 6 and 48).
+    active_symptoms: int
+    symptom_updates_this_week: int
 
 
 def _count_and_last_update(
@@ -235,12 +243,20 @@ def _count_and_last_update(
     return int(row[0]), row[1]
 
 
-def build_summary(db: Session, profile: Profile) -> HealthSummary:
+def build_summary(
+    db: Session, profile: Profile, now: datetime | None = None
+) -> HealthSummary:
     """Counts, per section, plus a completeness figure.
 
     **Completeness is informational and equal-weight** (PRD 4, section 7): each
     of the seven sections counts for the same, and a section counts once it has
     anything in it. It never blocks anything and is never shown as a warning.
+
+    **Symptoms are counted but not scored.** They are listed in the Health
+    tab and reported here as two figures, and they are deliberately *not* one
+    of the completeness sections: having no symptoms logged is a good state,
+    and a percentage that went up because somebody felt unwell would be
+    grotesque (PRD 6, sections 6 and 48).
 
     What it deliberately does not model: "I have no allergies". Someone with
     nothing to add in a section will not reach 100%, and that is accepted
@@ -311,4 +327,8 @@ def build_summary(db: Session, profile: Profile) -> HealthSummary:
         percent=int(completed * 100 / total),
         active_conditions=active_conditions,
         active_medications=active_medications,
+        active_symptoms=symptom_summary.active_count(db, profile.id),
+        symptom_updates_this_week=symptom_summary.recent_update_count(
+            db, profile.id, now or datetime.now(UTC)
+        ),
     )

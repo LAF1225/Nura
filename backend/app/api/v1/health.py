@@ -3,15 +3,16 @@
 Two routes, both about the profile rather than about any one record: what is
 in the health profile so far, and how far through setting it up the person is.
 
-The summary is counts only. No condition name, medication name, allergen or
-note body appears in it, so the Health overview -- and the optional Today card
-that shows the same figure -- cannot leak anything sensitive onto a screen
-someone else might glance at (PRD 4, sections 33 and 47).
+The summary is counts only. No condition name, medication name, allergen,
+symptom name or note body appears in it, so the Health overview -- and the
+optional Today card that shows the same figure -- cannot leak anything
+sensitive onto a screen someone else might glance at (PRD 4, sections 33 and
+47; PRD 6, section 62).
 """
 
 from fastapi import APIRouter
 
-from app.api.deps import DbSession, OwnedProfile
+from app.api.deps import DbSession, Now, OwnedProfile
 from app.schemas.health import (
     HealthSectionRead,
     HealthSetupRead,
@@ -24,14 +25,16 @@ router = APIRouter(prefix="/profiles/{profile_id}", tags=["health"])
 
 
 @router.get("/health-summary", response_model=HealthSummaryRead)
-def read_health_summary(profile: OwnedProfile, db: DbSession) -> HealthSummaryRead:
+def read_health_summary(
+    profile: OwnedProfile, db: DbSession, now: Now
+) -> HealthSummaryRead:
     """Everything the Health overview needs, in one request.
 
     Works from the first moment: a profile with nothing in it answers with
     zeroes and 0%, which the app renders as an invitation rather than as an
     error (PRD 4, section 37).
     """
-    summary = health.build_summary(db, profile)
+    summary = health.build_summary(db, profile, now)
     return HealthSummaryRead(
         profile_id=summary.profile_id,
         status=summary.status,  # type: ignore[arg-type]
@@ -52,6 +55,8 @@ def read_health_summary(profile: OwnedProfile, db: DbSession) -> HealthSummaryRe
         percent=summary.percent,
         active_conditions=summary.active_conditions,
         active_medications=summary.active_medications,
+        active_symptoms=summary.active_symptoms,
+        symptom_updates_this_week=summary.symptom_updates_this_week,
     )
 
 

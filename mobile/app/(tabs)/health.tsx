@@ -10,6 +10,7 @@
  * none of this needs a robot (section 38).
  */
 import { useRouter } from 'expo-router';
+import { Fragment } from 'react';
 import { View } from 'react-native';
 
 import {
@@ -31,6 +32,28 @@ import { useToday } from '../../src/hooks/useToday';
 import { apiErrorMessage } from '../../src/services/api';
 import { spacing } from '../../src/theme/tokens';
 import { timeAgo } from '../../src/utils/time';
+
+/**
+ * "2 active" / "None active" -- the symptom row's value (PRD 6, section 48).
+ *
+ * Symptoms are listed here because PRD 6 section 6 puts them in Health, and they
+ * are deliberately *not* one of the completeness sections: having none logged is a
+ * good state, and a percentage that rose because somebody felt unwell would be
+ * grotesque. They are also never added to the condition counts -- a symptom is
+ * what somebody is experiencing and a condition is what they have been told they
+ * have (PRD 6, section 6).
+ */
+function symptomValue(activeSymptoms: number): string {
+  if (activeSymptoms === 0) return 'None active';
+  return activeSymptoms === 1 ? '1 active' : `${activeSymptoms} active`;
+}
+
+function symptomDescription(updatesThisWeek: number): string | undefined {
+  if (updatesThisWeek === 0) return undefined;
+  return updatesThisWeek === 1
+    ? '1 updated this week'
+    : `${updatesThisWeek} updated this week`;
+}
 
 /** "3 added" / "Not added yet" / "O positive" -- never a record's contents. */
 function sectionValue(section: HealthSectionSummary, bloodType: string | null): string {
@@ -129,22 +152,37 @@ export default function HealthScreen() {
             <AppText variant="bodyStrong">What Nura knows</AppText>
             <ListGroup>
               {data.sections.map((section) => (
-                <ListRow
-                  key={section.key}
-                  label={section.title}
-                  description={sectionDescription(section)}
-                  value={sectionValue(section, data.bloodType)}
-                  showChevron
-                  onPress={() =>
-                    isRecordSection(section.key)
-                      ? router.push({
-                          pathname: '/health/[section]',
-                          params: { section: section.key },
-                        })
-                      : router.push('/health/blood-type')
-                  }
-                  accessibilityHint={`Opens ${section.title.toLowerCase()}`}
-                />
+                <Fragment key={section.key}>
+                  <ListRow
+                    label={section.title}
+                    description={sectionDescription(section)}
+                    value={sectionValue(section, data.bloodType)}
+                    showChevron
+                    onPress={() =>
+                      isRecordSection(section.key)
+                        ? router.push({
+                            pathname: '/health/[section]',
+                            params: { section: section.key },
+                          })
+                        : router.push('/health/blood-type')
+                    }
+                    accessibilityHint={`Opens ${section.title.toLowerCase()}`}
+                  />
+
+                  {/* Symptoms sit between allergies and doctors, which is where
+                      PRD 6 section 6 puts them -- and they are their own row
+                      rather than one of the record sections above. */}
+                  {section.key === 'allergies' ? (
+                    <ListRow
+                      label="Symptoms"
+                      description={symptomDescription(data.symptomUpdatesThisWeek)}
+                      value={symptomValue(data.activeSymptoms)}
+                      showChevron
+                      onPress={() => router.push('/symptoms')}
+                      accessibilityHint="Opens what you are experiencing, and its history"
+                    />
+                  ) : null}
+                </Fragment>
               ))}
             </ListGroup>
           </View>

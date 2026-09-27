@@ -17,7 +17,14 @@ from app.models.health import (
     Medication,
     Procedure,
 )
+from app.models.medication import (
+    MedicationDose,
+    MedicationSchedule,
+    MedicationScheduleTime,
+    MedicationSupply,
+)
 from app.models.profile import AccountProfileRole, Profile
+from app.models.symptom import SymptomEntry, SymptomEpisode, SymptomPhoto
 from app.models.user import User, UserSettings
 
 __all__ = [
@@ -32,9 +39,16 @@ __all__ = [
     "MedicalCondition",
     "MedicalNote",
     "Medication",
+    "MedicationDose",
+    "MedicationSchedule",
+    "MedicationScheduleTime",
+    "MedicationSupply",
     "Procedure",
     "Profile",
     "ProvisioningSession",
+    "SymptomEntry",
+    "SymptomEpisode",
+    "SymptomPhoto",
     "User",
     "UserSettings",
 ]

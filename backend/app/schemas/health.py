@@ -440,3 +440,6 @@ class HealthSummaryRead(BaseModel):
     percent: int
     active_conditions: int
     active_medications: int
+    #: Kept separate from the condition counts on purpose (PRD 6, s48).
+    active_symptoms: int
+    symptom_updates_this_week: int

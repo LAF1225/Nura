@@ -40,6 +40,13 @@ def test_table_set_matches_the_prds() -> None:
         "clinicians",
         "procedures",
         "medical_notes",
+        "medication_schedules",
+        "medication_schedule_times",
+        "medication_doses",
+        "medication_supply",
+        "symptom_episodes",
+        "symptom_entries",
+        "symptom_photos",
     }
 
 

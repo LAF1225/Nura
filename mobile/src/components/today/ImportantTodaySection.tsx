@@ -1,10 +1,10 @@
 /**
  * Important Today (PRD 3, sections 21, 57 and 60).
  *
- * The place medication reminders, appointments and follow-ups will surface.
- * None of those modules exists, so the list is empty and the section says so
- * in plain words. It does not invent a task to look busy, and it does not say
- * "No data" -- nothing needing attention is good news, not an absence
+ * Where medication doses and symptoms surface, and where appointments and
+ * follow-ups will. It stays empty for anybody using neither feature, and says
+ * so in plain words: it does not invent a task to look busy, and it does not
+ * say "No data" -- nothing needing attention is good news, not an absence
  * (PRD 3, section 57).
  */
 import { useRouter } from 'expo-router';
@@ -44,8 +44,9 @@ export function ImportantTodaySection({ items }: ImportantTodaySectionProps) {
               onPress={
                 item.actionRoute
                   ? // Cast: routes come from the server, so expo-router's typed
-                    // routes cannot check them at build time. Only items the
-                    // server sends reach here, and it sends none yet.
+                    // routes cannot check them at build time. Only routes the
+                    // server builds reach here -- today `/medications` and
+                    // `/symptoms/{id}`, both of which exist in this build.
                     () => router.push(item.actionRoute as never)
                   : undefined
               }

@@ -60,7 +60,12 @@ export function isApiError(error: unknown): error is ApiError {
 export function kindForStatus(status: number): ApiErrorKind {
   if (status === 401 || status === 403) return 'unauthorized';
   if (status === 404) return 'notFound';
-  if (status === 400 || status === 422) return 'validation';
+  // 413 and 415 arrive from a symptom photo upload: too large, or not an
+  // image. Both are something about the file the user chose, which is what
+  // `validation` means to a screen (PRD 6, section 34).
+  if (status === 400 || status === 422 || status === 413 || status === 415) {
+    return 'validation';
+  }
   if (status === 409) return 'conflict';
   if (status >= 500) return 'server';
   return 'unknown';

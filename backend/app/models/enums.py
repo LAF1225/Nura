@@ -137,6 +137,88 @@ HEALTH_SECTIONS = (
     "medical_notes",
 )
 
+#: --- medication scheduling (PRD 5) -----------------------------------------
+
+#: How a schedule repeats (PRD 5, section 9). Deliberately only two: "every
+#: day" and "on these weekdays". Several times a day is not a third type -- it
+#: is several time rows on one schedule -- and a date range is a start and an
+#: end on any schedule, not a shape of its own. Tapering, sliding scales and
+#: every-N-hours are out of scope (PRD 5, section 10).
+SCHEDULE_TYPES = ("daily", "specific_days")
+
+#: Where a dose stands (PRD 5, section 21). ``scheduled`` and ``snoozed`` are
+#: waiting; ``taken`` and ``skipped`` are what the person recorded; ``missed``
+#: is what the grace period concluded when nobody recorded anything; and
+#: ``cancelled`` is a future dose withdrawn because the schedule changed. Only
+#: ``cancelled`` is excluded from adherence (section 27).
+DOSE_STATUSES = ("scheduled", "snoozed", "taken", "skipped", "missed", "cancelled")
+
+#: Who recorded a dose action (PRD 5, section 17). ``app`` is the only one PRD
+#: 5 produces through the app; ``robot_voice`` is produced by the future robot
+#: hook, which is real and authenticated but has no hardware behind it yet
+#: (sections 45 and 47). ``caregiver`` and ``system`` are reserved for later
+#: PRDs and nothing writes them.
+DOSE_SOURCES = ("app", "robot_voice", "caregiver", "system")
+
+#: Why a dose was skipped (PRD 5, section 20). Recorded exactly as chosen and
+#: never interpreted: Nura does not conclude anything medical from "feeling
+#: unwell", and does not escalate on it (section 19).
+SKIP_REASON_CODES = (
+    "none",
+    "feeling_unwell",
+    "ran_out",
+    "clinician_advised",
+    "too_late",
+    "other",
+)
+
+#: Where a dose sits relative to now (PRD 5, section 54). Derived on every
+#: read from ``scheduled_for`` and the grace period -- never stored, for the
+#: same reason a robot's connection status is never stored: a value that means
+#: "right now" is wrong the moment it is written.
+DOSE_WINDOWS = ("upcoming", "due", "overdue", "completed")
+
+
+#: --- symptoms (PRD 6) ------------------------------------------------------
+
+#: Where a symptom episode stands (PRD 6, section 10). ``recurring`` is an
+#: episode of something that has happened before -- active, with a link back to
+#: the bout it follows -- so a symptom returning never merges two separate
+#: events into one (section 38). Nothing infers ``resolved``: only the user
+#: saying so sets it.
+SYMPTOM_EPISODE_STATUSES = ("active", "resolved", "recurring", "historical")
+
+#: The two statuses that mean "this is going on now". Used by the active list,
+#: the Today card and the summary, so they can never disagree.
+SYMPTOM_ACTIVE_STATUSES = ("active", "recurring")
+
+#: How the symptom has changed since last time (PRD 6, section 23). ``unsure``
+#: is a real answer and is stored as one rather than left blank, because "I
+#: don't know" and "I didn't say" are different things.
+SYMPTOM_CHANGE_STATES = ("improving", "same", "worsening", "unsure")
+
+#: How a symptom record was captured (PRD 6, section 57). PRD 6's production
+#: flows write only the first two: the manual form and the in-app guided
+#: conversation. The other three are reserved so a later PRD adds a writer
+#: rather than re-deciding the vocabulary, and nothing writes them today --
+#: in particular there is no speech recognition anywhere in this system.
+SYMPTOM_SOURCES = (
+    "manual_app",
+    "guided_app",
+    "robot_voice_future",
+    "caregiver_future",
+    "import_future",
+)
+
+#: The sources PRD 6 will actually accept from a client. A request claiming to
+#: be a future robot's voice is refused rather than stored (section 57).
+SYMPTOM_SOURCES_ALLOWED = ("manual_app", "guided_app")
+
+#: Image types a symptom photo may be (PRD 6, section 34). Checked against the
+#: bytes as well as the declared type, so a mislabelled upload is refused.
+#: Nothing looks *at* these images: PRD 6 section 32 rules out any analysis.
+SYMPTOM_PHOTO_CONTENT_TYPES = ("image/jpeg", "image/png", "image/heic", "image/heif")
+
 #: Appearance options, already established in PRD 0.
 THEMES = ("system", "light", "dark")
 

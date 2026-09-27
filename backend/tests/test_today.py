@@ -262,7 +262,8 @@ def test_dashboard_defaults_show_the_calm_layout(client, make_token, clock):
     # Real, but off until the user asks for it (PRD 3, sections 3 and 19).
     assert by_key["quick_actions"]["visible"] is False
     # Reserved keys are listed but never available, so no client renders them.
-    assert by_key["medications"]["available"] is False
+    # Medications left this group in PRD 5; appointments have not.
+    assert by_key["appointments"]["available"] is False
 
 
 def test_dashboard_preferences_persist_and_reorder(client, make_token, clock):
@@ -282,20 +283,26 @@ def test_dashboard_preferences_persist_and_reorder(client, make_token, clock):
     assert saved.status_code == 200, saved.json()
 
     cards = client.get("/api/v1/dashboard-preferences", headers=headers).json()["cards"]
-    assert [card["key"] for card in cards[:3]] == [
-        "device_status",
-        "quick_actions",
-        "daily_checkin",
-    ]
-    assert cards[2]["visible"] is False
-    assert [card["position"] for card in cards[:3]] == [0, 1, 2]
+    order = [card["key"] for card in cards]
+    by_key = {card["key"]: card for card in cards}
+
+    # The three cards the user placed keep their order relative to each other.
+    # Asserting that rather than absolute slots is deliberate: a card added by
+    # a later PRD falls back to its registry position, so it can legitimately
+    # land between two saved ones -- which is how `medications` arrived in
+    # PRD 5 without anybody re-saving a layout.
+    assert order.index("device_status") < order.index("quick_actions")
+    assert order.index("quick_actions") < order.index("daily_checkin")
+    assert by_key["daily_checkin"]["visible"] is False
+    # Positions are handed back as a canonical 0..n-1 run whatever was stored.
+    assert [card["position"] for card in cards] == list(range(len(cards)))
 
 
 def test_a_card_whose_feature_does_not_exist_cannot_be_enabled(client, make_token, clock):
     headers = ready_account(client, make_token)
     response = client.put(
         "/api/v1/dashboard-preferences",
-        json={"cards": [{"card_key": "medications", "visible": True}]},
+        json={"cards": [{"card_key": "appointments", "visible": True}]},
         headers=headers,
     )
     assert response.status_code == 422
@@ -342,8 +349,9 @@ def test_today_works_with_no_device_and_no_checkin(client, make_token, clock):
     assert body["daily_checkin"]["checkin"] is None
     assert body["daily_checkin"]["recent_completed_count"] == 0
     assert body["important"] == []
-    assert [card["key"] for card in body["cards"]][:2] == [
+    assert [card["key"] for card in body["cards"]][:3] == [
         "daily_checkin",
+        "medications",
         "device_status",
     ]
 
@@ -415,14 +423,14 @@ def test_today_reflects_a_saved_layout(client, make_token, clock):
         },
         headers=headers,
     )
-    cards = client.get(f"/api/v1/today?local_date={TODAY}", headers=headers).json()[
-        "cards"
+    order = [
+        card["key"]
+        for card in client.get(
+            f"/api/v1/today?local_date={TODAY}", headers=headers
+        ).json()["cards"]
     ]
-    assert [card["key"] for card in cards][:3] == [
-        "quick_actions",
-        "daily_checkin",
-        "device_status",
-    ]
+    assert order.index("quick_actions") < order.index("daily_checkin")
+    assert order.index("daily_checkin") < order.index("device_status")
 
 
 def test_today_needs_authentication(client):

@@ -1,6 +1,6 @@
 # System overview
 
-Status: PRD 2 — Robot Pairing, BLE Discovery & Wi-Fi Provisioning.
+Status: PRD 6 — Symptom Tracking & Structured Symptom Communication.
 
 > The robot itself has not been built. The firmware and the pairing flow exist
 > and are tested as far as software allows, but no part of the phone-to-robot
@@ -51,15 +51,23 @@ lives. The backend is the only component trusted with authorisation.
 | Dashboard      | Cards resolved from a server registry; show, hide and reorder from Customize Today |
 | Health record  | Conditions, medications, allergies, doctors, procedures, notes and blood type — full CRUD, owned by a profile |
 | Health setup   | Gradual, resumable, skippable; an equal-weight completeness figure that blocks nothing |
-| Database       | `users`, `user_settings`, `profiles`, `account_profile_roles`, `devices`, `provisioning_sessions`, `daily_checkins`, `dashboard_preferences`, `medical_conditions`, `medications`, `allergies`, `clinicians`, `procedures`, `medical_notes` |
-| Endpoints      | `/health`, `/api/v1/version`, `/api/v1/me`, `/api/v1/onboarding`, `/api/v1/profiles`, `/api/v1/devices`, `/api/v1/today`, `/api/v1/daily-checkins`, `/api/v1/dashboard-preferences`, and the health record under `/api/v1/profiles/{id}/…` |
+| Medications    | Schedules with their own time zone, generated doses, Taken / Snooze / Skip, missed-dose transition, history and adherence |
+| Refills        | Opt-in supply counts, decremented only by Taken, with a threshold the user chooses |
+| Reminders      | OS-scheduled local notifications, rebuilt from the server's doses; queued actions when offline |
+| Symptoms       | Episodes and entries, a manual form and a deterministic guided conversation over one shared draft, severity and change tracking, history, resolution and recurrence |
+| Symptom photos | Optional, private, served only through an authenticated route; never analysed |
+| Safety-netting | One reviewed non-diagnostic sentence, shown only on a change the user recorded; the urgent rules are built, tested and disabled |
+| Database       | `users`, `user_settings`, `profiles`, `account_profile_roles`, `devices`, `provisioning_sessions`, `daily_checkins`, `dashboard_preferences`, `medical_conditions`, `medications`, `allergies`, `clinicians`, `procedures`, `medical_notes`, `medication_schedules`, `medication_schedule_times`, `medication_doses`, `medication_supply`, `symptom_episodes`, `symptom_entries`, `symptom_photos` |
+| Endpoints      | `/health`, `/api/v1/version`, `/api/v1/me`, `/api/v1/onboarding`, `/api/v1/profiles`, `/api/v1/devices`, `/api/v1/today`, `/api/v1/daily-checkins`, `/api/v1/dashboard-preferences`, the health record, the medication routes and the symptom routes under `/api/v1/profiles/{id}/…`, and `/api/v1/device-actions/…` for the robot |
 
-Deliberately absent: medication *scheduling* and reminders, symptom logging,
-appointments, AI or chat, caregiver permissions, emergency detection, push
-notifications, HealthKit and Health Connect. The daily check-in is a wellbeing
-prompt with three answers and an optional note -- it is not symptom tracking.
-The health record stores medications but attaches no schedule to them, and
-nothing in the system interprets any of it.
+Deliberately absent: appointments, AI or chat, caregiver permissions, emergency
+detection, push notifications, HealthKit and Health Connect. The daily check-in is
+a wellbeing prompt with three answers and an optional note -- it is not symptom
+tracking, and the symptom system is separate from it. Medication reminders record
+what somebody did and interpret none of it: no interaction checking, no dose
+advice, and nothing inferred from a skip reason. Symptom records are the same:
+no diagnosis, no likelihood, no cause attributed to a medication, and no analysis
+of a photograph.
 
 ### How a robot joins an account
 
@@ -104,11 +112,15 @@ mobile/
 │   ├── appearance.tsx        More → Appearance
 │   ├── customize-today.tsx   More → Customize Today
 │   ├── health/               The health record: setup, sections, forms
+│   ├── medications/          Schedules, doses, history, supply, skip sheet
+│   ├── symptoms/             Overview, log, Talk to Nura, review, history, detail
 │   └── +not-found.tsx
 └── src/
     ├── components/           Screen, Card, Button, AppText, List, …
     │   └── today/            Today cards and the card registry
     ├── features/health/      Section specs, form logic, API, hooks, drafts
+    ├── features/medications/ Schedule rules, dose wording, reminders, queue
+    ├── features/symptoms/    Shared draft, conversation engine, photos, queue
     ├── constants/            Runtime config; the only reader of process.env
     ├── hooks/                useToday, useDevices, network status, …
     ├── navigation/           Tab definitions (single source of tab order)
@@ -125,8 +137,8 @@ mobile/
     └── utils/                logger
 ```
 
-Feature folders (`medications/`, `symptoms/`, `caregivers/`, `safety/`, …) are
-created when the PRD that needs them arrives, not in advance.
+Feature folders (`caregivers/`, `safety/`, …) are created when the PRD that needs
+them arrives, not in advance.
 
 ### Rules the code follows
 
@@ -189,9 +201,13 @@ backend/
 │   ├── models/               User, Profile, Device, DailyCheckIn, health, …
 │   ├── schemas/              Pydantic request/response models
 │   ├── services/             The rules: onboarding, devices, check-ins, cards
+│   │   ├── medications/      Schedules, doses, supply, adherence, summary
+│   │   ├── symptoms/         Episodes, entries, photos, safety, summary
+│   │   └── storage.py        Private object storage for symptom photos
 │   └── main.py
 ├── alembic/                  Migrations
-├── scripts/                  Development fixtures (never for production)
+├── scripts/                  Development fixtures, plus the medication
+│                             maintenance job (the only one for production)
 └── tests/
 ```
 
@@ -428,6 +444,94 @@ deliberate too: it is the authorization surface for medical records, and being
 able to read each resource's four routes in full is worth more there than
 brevity.
 
+## The medication system
+
+PRD 5 turns a medication *record* into reminders. They are three different
+things in three different tables, and keeping them apart is what stops a
+record from quietly becoming an instruction:
+
+```text
+medications          what it is             (PRD 4, untouched)
+    ├── medication_schedules        when to remind, and in which time zone
+    │       └── medication_schedule_times
+    ├── medication_doses            one moment, and what happened at it
+    └── medication_supply           how many are left
+```
+
+**A reminder is a wall-clock time, not an instant.** The schedule carries an
+IANA zone, and generation resolves local-date-plus-local-time in that zone
+into a UTC instant, so 8am stays 8am across a daylight-saving change. The two
+awkward days a year are decided rather than left to chance: a time that does
+not exist produces one dose, and a time that happens twice produces one dose.
+
+**Doses are rows, generated 14 days ahead**, so "what is due today", "what did
+I miss" and the phone's notification schedule all read the same thing. Every
+read of Today, the dose list and adherence replenishes first, which is why
+PRD 5 needs no background worker to be correct; a cron-friendly script does
+the same for people who have not opened the app.
+
+**An action sets a state on one row** — Taken, Snooze and Skip never append an
+event beside it. That is what makes a retried request harmless, what stops a
+robot's confirmation from becoming a second entry in somebody's history, and
+what lets an offline queue hold one final answer per dose.
+
+**Editing the future never edits the past.** A schedule change rebuilds doses
+from now forward and cannot reach one that has been recorded. Deleting a
+schedule clears the link on its doses rather than cascading.
+
+Adherence is one figure with its denominator written down —
+`taken / (taken + skipped + missed)` — and it is never called adequate or
+inadequate. Supply is the user's own count, decremented only by Taken, and
+described as approximate because it is.
+
+The whole model, including the status transitions, the offline conflict rule
+and the robot action contract, is in
+[the medication system](medication-system.md).
+
+## The symptom system
+
+PRD 6 records what somebody is *experiencing*, which is a different thing from
+what a clinician has told them they have — and the two are kept in different
+tables, in both directions (PRD 6, section 6):
+
+```text
+medical_conditions       what you have been told you have   (PRD 4, untouched)
+
+symptom_episodes         one bout of one symptom
+    +-- symptom_entries      one observation about it, at one moment
+            +-- symptom_photos   metadata for a privately stored image
+```
+
+**An episode is a bout, not a name.** A headache in March and a headache in
+October are two episodes, the second linked to the first and carrying the status
+`recurring`. Each keeps its own onset and resolution, so nothing unrelated is
+merged and "how many times has this happened?" has an answer
+(PRD 6, section 38).
+
+**Two entry flows, one record.** The manual form and the in-app guided
+conversation fill the same draft, end on the same review screen and save through
+the same endpoint. The only difference is the `source` recorded. The conversation
+is deterministic — a vocabulary and a rule set, no model — and its hardest
+requirement is that it never asks again for something volunteered
+(PRD 6, sections 4, 27 and 28).
+
+**Uncertainty is preserved.** "No nausea" and "I might have felt dizzy" are stored
+as denied and uncertain rather than flattened, and the safety rules subtract both
+before anything can fire (PRD 6, sections 24 and 46).
+
+**Nothing is interpreted.** No diagnosis, no likelihood, no cause, and no analysis
+of a photo. The one thing Nura says back is a reviewed sentence, shown when the
+*user* recorded a change, and the urgent-care rules are built, tested and switched
+off until a clinician has reviewed them (PRD 6, sections 32, 42, 44 and 81).
+
+Symptom photos are the first thing Nura stores that is not a database row. They go
+to private object storage and are served only by a route that re-checks the whole
+ownership chain for every byte — there is no public URL and no signed one
+(PRD 6, section 63).
+
+The whole model, including the conversation engine, the offline queue and the
+safety boundary, is in [the symptom system](symptom-system.md).
+
 ## Security posture
 
 These hold now and constrain every later PRD:
@@ -505,7 +609,50 @@ verified or checked. It does not infer a severity from a reaction, suggest a
 condition from typed text, compute an interaction, or tell anyone to start,
 stop or change a medication. PRD 4 stores and displays; it does not advise.
 
-The daily check-in is the other place this bites. A `not_great` answer is
+**Medication reminders are where PRD 5 had to hold the same line while
+handling something people genuinely want an answer about.** Nura records and
+reminds; it does not recommend changing a dose, doubling after a missed one,
+stopping anything, or deciding whether a late dose should still be taken. It
+infers nothing from a skip reason and checks no interactions. A dose nobody
+recorded reads "Wasn't marked as taken" -- the fact, not a reprimand -- and
+the adherence figure is never called adequate or inadequate.
+
+The one sentence in the product that approaches advice points at a person:
+
+> If you're unsure what to do after missing a dose, follow the instructions
+> from your clinician or pharmacist.
+
+It is defined once and asserted by a test, as is the absence of guilt wording
+around a missed dose.
+
+**Symptoms are where PRD 6 had to hold the line hardest**, because describing a
+symptom is the closest a person comes to asking what is wrong with them. Nura
+records the description and never interprets it: no condition is named, no
+likelihood is given, no cause is attributed — not even to a medication somebody
+took just before feeling unwell (PRD 6, sections 81 and 82). No photograph is
+analysed (section 32).
+
+The one thing it says back is a reviewed sentence, shown only when the *user*
+recorded a change they chose:
+
+> You have recorded this as worsening. If it keeps getting worse, becomes severe,
+> or is affecting what you can normally do, consider contacting a healthcare
+> professional.
+
+Severity alone never triggers it, whatever the number (section 78), and a phrase
+somebody hedged or denied never triggers anything at all (sections 24 and 46). The
+urgent-care rules PRD 6 section 44 describes are written down, tested and
+**switched off**, because no clinician has reviewed them; enabling them is a
+clinical decision rather than a deployment one. Every sentence Nura can say about a
+symptom lives in one module so it can be reviewed without touching symptom code,
+and a test reads all of them and fails on a named condition, a likelihood or an
+attribution of cause.
+
+Nothing in the symptom system acts on its own: no emergency service is called, no
+caregiver is messaged, no monitoring is activated and no medication is changed
+(section 43).
+
+The daily check-in is the fourth place this bites. A `not_great` answer is
 acknowledged -- "Thanks for checking in." -- and nothing more. It does not
 suggest a cause, does not recommend an action, does not raise an alert, and
 does not notify anybody. A test asserts the wording carries no such language.

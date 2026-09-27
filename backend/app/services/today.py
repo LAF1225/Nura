@@ -6,9 +6,12 @@ that fills in piece by piece. So the server assembles the day: who this is
 for, whether they have checked in, whether their Nura is connected, and which
 cards to place.
 
-What is *not* here is as deliberate as what is: no medications, appointments,
-symptoms or routines, because those modules do not exist yet, and a summary
-that invents them would be a summary of nothing (PRD 3, sections 16 and 21).
+PRD 5 added the first feature area to actually join it -- the next medication
+dose, three counts, and anything running low -- and PRD 6 adds the second:
+which symptoms are active, and whether the person has recorded any of them as
+getting worse. What is still *not* here is as deliberate as what is: no
+appointments and no routines, because those modules do not exist yet, and a
+summary that invented them would be a summary of nothing (PRD 3, ss16, 21).
 """
 
 from dataclasses import dataclass, field
@@ -21,6 +24,9 @@ from app.services import checkins as checkin_service
 from app.services import dashboard as dashboard_service
 from app.services import devices as device_service
 from app.services import profiles as profile_service
+from app.services.medications import doses as dose_service
+from app.services.medications import summary as medication_service
+from app.services.symptoms import summary as symptom_service
 
 
 @dataclass(frozen=True)
@@ -61,9 +67,17 @@ class TodaySummary:
     daily_checkin: CheckInSummary
     device: DeviceSummary | None
     cards: list[dashboard_service.ResolvedCard]
-    #: Reserved for the Important Today section. Always empty in PRD 3: no
-    #: module produces items yet, and inventing them is explicitly ruled out
-    #: (PRD 3, sections 21 and 60).
+    #: Null for an account with no profile yet: medications belong to a
+    #: person, so there is nobody to have any.
+    medications: medication_service.MedicationSummary | None = None
+    #: Null for the same reason. ``has_episodes`` is False for anybody who
+    #: has never logged a symptom, which is what lets Today leave the card
+    #: out entirely (PRD 6, section 39).
+    symptoms: symptom_service.SymptomSummary | None = None
+    #: The Important Today section (PRD 3, section 21). PRD 5 is the first
+    #: thing to put anything in it -- doses that are overdue, due, or next up,
+    #: in that order. Ordinary reminders, never framed as emergencies
+    #: (PRD 5, section 29).
     important: list[object] = field(default_factory=list)
 
 
@@ -103,6 +117,12 @@ def build_summary(
             cards=dashboard_service.default_cards(),
         )
 
+    # Bring doses up to date before anything reads them: top the window up
+    # ahead, and record whatever quietly became missed while the app was
+    # closed. Opening Today is the commonest moment for that to happen, which
+    # is why PRD 5 needs no background worker to be correct (section 71).
+    dose_service.replenish(db, profile.id, now)
+
     recent = checkin_service.recent_checkins(db, profile.id, local_date)
     today_checkin = next(
         (entry for entry in recent if entry.checkin_date == local_date), None
@@ -131,4 +151,6 @@ def build_summary(
         ),
         device=device_summary,
         cards=dashboard_service.resolve_cards(db, profile.id),
+        medications=medication_service.build_summary(db, profile.id, local_date, now),
+        symptoms=symptom_service.build_summary(db, profile.id, now),
     )

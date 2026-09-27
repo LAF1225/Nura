@@ -29,6 +29,13 @@ export function setAuthTokenProvider(provider: TokenProvider): void {
   getAccessToken = provider;
 }
 
+/**
+ * Uploads get longer than the usual timeout: a photo over a slow connection is
+ * not a stalled request, and failing it early would send the user back to a
+ * picker they have already used.
+ */
+const UPLOAD_TIMEOUT_MS = 60_000;
+
 export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   /** Serialised as JSON. Omit for GET. */
@@ -149,4 +156,109 @@ export async function apiRequest<T>(
     log.error('response body was not valid JSON', { path });
     throw new ApiError('server', `Response from ${path} was not valid JSON.`, { cause });
   }
+}
+
+/** One file, as React Native describes a local file to `fetch`. */
+export interface UploadFile {
+  /** A `file://` URI on this device. */
+  uri: string;
+  name: string;
+  type: string;
+}
+
+/**
+ * Sends one file as multipart form data.
+ *
+ * Separate from `apiRequest` because the two have almost nothing in common
+ * beyond the base URL and the token: there is no JSON body to serialise, the
+ * Content-Type must be left for the runtime to set with its own boundary, and a
+ * photo needs a longer timeout than a JSON call. Everything else -- the error
+ * shapes, the offline classification, the `code` extraction -- is shared.
+ *
+ * Kept in this module because it is still `fetch`, and this is still the only
+ * place in the app allowed to call it (PRD 0, section 15).
+ */
+export async function apiUpload<T>(
+  path: string,
+  options: { file: UploadFile; fields?: Record<string, string>; timeoutMs?: number }
+): Promise<T> {
+  if (!config.apiBaseUrl) {
+    throw new ApiError('configuration', 'No API base URL is configured.');
+  }
+
+  const body = new FormData();
+  // Cast: React Native accepts a `{ uri, name, type }` descriptor where the
+  // DOM types insist on a Blob, and reading the file into a Blob first would
+  // put a whole photo in memory for no reason.
+  body.append('file', options.file as unknown as Blob);
+  for (const [key, value] of Object.entries(options.fields ?? {})) {
+    body.append(key, value);
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs ?? UPLOAD_TIMEOUT_MS;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const token = await getAccessToken();
+
+  let response: Response;
+  try {
+    response = await fetch(`${config.apiBaseUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body,
+      signal: controller.signal,
+    });
+  } catch (cause) {
+    if (controller.signal.aborted) {
+      log.warn('upload timed out', { path, timeoutMs });
+      throw new ApiError('timeout', `Upload to ${path} timed out.`, { cause });
+    }
+    const kind = await classifyNetworkFailure();
+    // The filename is never logged: a photo path is as sensitive as what is in
+    // it (PRD 6, section 62).
+    log.warn('upload failed before a response', { path, kind });
+    throw new ApiError(kind, `Could not reach ${path}.`, { cause });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!response.ok) {
+    const code = await readErrorCode(response);
+    log.warn('upload returned an error status', { path, status: response.status, code });
+    throw new ApiError(
+      kindForStatus(response.status),
+      `Upload to ${path} failed with status ${response.status}.`,
+      { status: response.status, code }
+    );
+  }
+
+  try {
+    return (await response.json()) as T;
+  } catch (cause) {
+    throw new ApiError('server', `Response from ${path} was not valid JSON.`, { cause });
+  }
+}
+
+/**
+ * An authenticated source for an `<Image>`, or null when signed out.
+ *
+ * Private media -- a symptom photo -- is served by a route that re-checks the
+ * profile on every request, so there is no public URL to hand a component and no
+ * signed one either (PRD 6, section 63). What a component needs instead is the
+ * URL *and* the bearer token, and building both here keeps URLs and tokens
+ * inside this module where they belong.
+ */
+export async function mediaSource(
+  path: string
+): Promise<{ uri: string; headers: Record<string, string> } | null> {
+  if (!config.apiBaseUrl) return null;
+  const token = await getAccessToken();
+  if (token === null) return null;
+  return {
+    uri: `${config.apiBaseUrl}${path}`,
+    headers: { Authorization: `Bearer ${token}` },
+  };
 }

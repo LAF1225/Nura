@@ -11,6 +11,10 @@
  *    send yet (PRD 3, section 27).
  */
 import type { ConnectionStatus } from './device';
+import type { TodayMedications } from '../features/medications/types';
+import type { TodaySymptoms } from '../features/symptoms/types';
+
+export type { TodayMedications, TodaySymptoms };
 
 export type WellbeingLevel = 'good' | 'okay' | 'not_great';
 
@@ -55,9 +59,9 @@ export interface TodayCheckInState {
 /**
  * An Important Today item.
  *
- * Nothing produces these yet; the list is always empty in PRD 3. The shape is
- * fixed now so medication reminders, appointments and follow-ups can be added
- * later without the section changing how it renders (PRD 3, section 60).
+ * The shape was fixed in PRD 3 so later modules could fill the section without
+ * the client changing how it renders. PRD 5 is the first to do it: medication
+ * doses that are overdue, due, or next up, in that order (PRD 5, section 29).
  */
 export interface TodayItem {
   id: string;
@@ -102,6 +106,19 @@ export interface TodaySummary {
   /** Null when no robot is linked -- a normal state, not an error. */
   device: TodayDevice | null;
   cards: DashboardCard[];
+  /**
+   * The next dose and a few counts (PRD 5, section 53). Null only for an
+   * account with no profile yet; `hasSchedules` is false for anyone who has
+   * not set a reminder up, and the card is then not drawn at all.
+   */
+  medications: TodayMedications | null;
+  /**
+   * Two counts and the symptom written about most recently
+   * (PRD 6, section 52). Null only for an account with no profile yet;
+   * `hasEpisodes` is false for anybody who has never logged a symptom, and
+   * the card is then not drawn at all.
+   */
+  symptoms: TodaySymptoms | null;
   important: TodayItem[];
 }
 

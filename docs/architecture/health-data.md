@@ -8,6 +8,12 @@ allergies, clinicians, procedures, medical notes and blood type. Daily
 wellbeing check-ins are health-adjacent but separate — see
 [the system overview](system-overview.md).
 
+**A medication record is what a medication *is*.** When to be reminded about
+it is a schedule, which lives in its own tables and is described in
+[the medication system](medication-system.md). PRD 5 did not change a single
+column here: a record still carries no schedule, and nothing in this document
+reminds anybody of anything.
+
 > **None of this needs the robot.** Every health feature works with no robot
 > linked, with one that is offline, and with one the backend has heard from.
 > No health endpoint touches the device tables, and no health data is ever
@@ -72,7 +78,7 @@ account-profile link is exclusive.
 | Table | Holds | Notes |
 | ----- | ----- | ----- |
 | `medical_conditions` | name, status, when diagnosed, who diagnosed it, notes | `status` includes `uncertain` |
-| `medications` | name, dose, unit, form, frequency, instructions, dates, reason, whether current | record only — no schedule |
+| `medications` | name, dose, unit, form, frequency, instructions, dates, reason, whether current | record only — schedules live in their own tables |
 | `allergies` | allergen, type, reaction, severity | severity is the user's own judgement |
 | `clinicians` | name, specialty, clinic, phone, email, address | only `name` is required |
 | `procedures` | name, when, hospital, surgeon, outcome | approximate dates supported |
@@ -171,12 +177,18 @@ with no allergies will not reach 100%. That is accepted rather than solved:
 the figure is a gentle prompt, and a flag per section would add state to the
 data model to make a progress bar happier.
 
-## What later PRDs will need
+## What later PRDs need
 
-The schema is structured for what is already known to be coming:
+The schema is structured for what is already known to be coming, and the
+first of these has now happened:
 
-- **PRD 5 (medication scheduling)** attaches schedules to `medications` rather
-  than reshaping it. The record and the instruction stay separate.
+- **PRD 5 (medication scheduling)** attached schedules to `medications`
+  rather than reshaping it, exactly as anticipated. Not one column in this
+  document changed. It did add one rule to this file's routes: a medication
+  with recorded dose history cannot be deleted — it is archived by marking it
+  inactive instead, which also pauses its schedules (`409
+  medication_has_history`). Deleting it would take somebody's adherence
+  history with it.
 - **PRD 6 (symptoms)** gets its own model. Symptom logs must not be kept as
   medical notes — a note is something a person wrote, and a symptom log is a
   measurement over time.
@@ -185,3 +197,27 @@ The schema is structured for what is already known to be coming:
   structured and filterable today; `status`, `is_active` and the note
   `category` are what make that possible.
 - **Caregivers** attach to the account-profile link, as described above.
+
+---
+
+## Symptoms are not conditions
+
+PRD 6 adds `symptom_episodes`, `symptom_entries` and `symptom_photos`. They are
+health data and everything on this page applies to them: they belong to a
+profile, they are reachable only through that profile, a missing one is a 404
+rather than a 403, and no value of theirs is ever logged.
+
+What they are **not** is part of the record described above. A condition is what
+somebody has been told they have; a symptom is what they are experiencing. Nothing
+converts one into the other, in either direction (PRD 6, section 6), and the
+counts are reported separately so a summary cannot imply a diagnosis
+(section 48).
+
+They are also deliberately outside the completeness figure. The seven sections
+above are things somebody fills in; having no symptoms logged is a good state, and
+a percentage that rose because somebody felt unwell would be grotesque.
+`total_sections` stays 7.
+
+Symptom photos are the one piece of health data that is not a database row. They
+are described in [the symptom system](symptom-system.md), which is also where the
+privacy chain for them is written down.

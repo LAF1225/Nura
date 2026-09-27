@@ -43,6 +43,10 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
+# Private user media -- symptom photos written by a local backend.
+# Never committed: these are somebody's health data (PRD 6, section 62).
+/backend/.private-media/
+
 # ---------------------------------------------------------------------------
 # Logs and editor / OS noise
 # ---------------------------------------------------------------------------

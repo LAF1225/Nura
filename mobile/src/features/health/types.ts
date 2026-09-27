@@ -84,6 +84,13 @@ export interface HealthSummary {
   percent: number;
   activeConditions: number;
   activeMedications: number;
+  /**
+   * Symptom figures, kept as their own numbers and never folded into the
+   * condition counts: a symptom is what somebody is experiencing and a
+   * condition is what they have been told they have (PRD 6, sections 6, 48).
+   */
+  activeSymptoms: number;
+  symptomUpdatesThisWeek: number;
 }
 
 export interface HealthSetup {
@@ -147,6 +154,14 @@ export interface SectionSpec {
   description: string;
   /** Which field is the row's heading. */
   titleField: string;
+  /**
+   * A way out of this section into the feature that acts on it.
+   *
+   * Only medications have one so far: Health holds *what* a medication is and
+   * Care holds the reminders for it, and PRD 5 section 6 asks for a way
+   * across that boundary from the record itself.
+   */
+  footerLink?: { label: string; route: string; hint: string };
   /** The second line of a row, or null for none. */
   subtitle: (record: HealthRecord) => string | null;
   fields: FieldSpec[];

@@ -40,6 +40,12 @@
       "expo-web-browser",
       "expo-localization",
       [
+        "expo-notifications",
+        {
+          "color": "#1C605C"
+        }
+      ],
+      [
         "react-native-ble-manager",
         {
           "neverForLocation": true,

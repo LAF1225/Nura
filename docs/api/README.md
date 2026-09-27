@@ -264,15 +264,77 @@ has heard from — and none of those is an error.
   "cards": [
     { "key": "daily_checkin", "title": "Daily check-in", "available": true, "visible": true, "position": 0 }
   ],
-  "important": []
+  "medications": {
+    "next_due": {
+      "dose_id": "…",
+      "medication_name": "Metformin",
+      "medication_dose": "500 mg",
+      "scheduled_for": "2026-09-13T08:00:00Z",
+      "status": "scheduled",
+      "window": "overdue",
+      "can_snooze": true
+    },
+    "due_today_count": 3,
+    "overdue_count": 1,
+    "remaining_today_count": 2,
+    "low_supply": [],
+    "has_schedules": true
+  },
+  "symptoms": {
+    "active_count": 2,
+    "worsening_count": 1,
+    "most_recent": {
+      "episode_id": "…",
+      "name": "Headache",
+      "severity": 5,
+      "change_state": "worsening",
+      "updated_at": "2026-09-27T09:00:00Z"
+    },
+    "has_episodes": true
+  },
+  "important": [
+    {
+      "id": "medication-dose:…",
+      "type": "medication_dose",
+      "title": "Metformin — 500 mg",
+      "subtitle": "Not marked as taken",
+      "due_at": "2026-09-13T08:00:00Z",
+      "priority": "important",
+      "action_route": "/medications"
+    },
+    {
+      "id": "symptom-episode:…",
+      "type": "symptom_episode",
+      "title": "Headache — 5/10",
+      "subtitle": "You recorded this as worsening",
+      "priority": "normal",
+      "action_route": "/symptoms/…"
+    }
+  ]
 }
 ```
 
-`device` is `null` when no robot is linked. `important` is always empty in
-PRD 3: nothing produces items yet, and the shape is fixed now so medication
-reminders and appointments can join later without the client changing. As
-feature areas land they extend this response rather than adding requests — the
-alternative is an app that opens with six spinners.
+`device` is `null` when no robot is linked; `medications` and `symptoms` are
+`null` only for an account with no profile yet. As feature areas land they extend
+this response rather than adding requests — the alternative is an app that opens
+with six spinners.
+
+`has_schedules` and `has_episodes` are what let the app leave a card out entirely
+rather than drawing an empty one. Medication rows come before symptom rows in
+`important`: a dose still waiting to be recorded is something to do now, while a
+symptom recorded as worsening is something to know. A symptom row is never
+`important` priority — PRD 6 section 40 forbids labelling one urgent without a
+reviewed safety rule, and those are switched off.
+
+**PRD 5 is the first module to fill `important`** (PRD 3 fixed the shape and
+left it empty). It carries up to three medication doses, ordered overdue, then
+due, then next up. `priority: important` raises a row's prominence; it does
+not make it an alert, and nothing escalates to anybody.
+
+`medications.has_schedules` is `false` for anybody who has not set a reminder
+up — which is most accounts — and the client then draws no medication card at
+all rather than an empty one. The whole block is described in
+[medication-system.md](../architecture/medication-system.md).
 
 ### `GET /api/v1/daily-checkins/today` · `PUT /api/v1/daily-checkins/today`
 
@@ -312,10 +374,12 @@ the same slot.
 Every card carries `available`. It is `false` while the feature behind the card
 does not exist: such a card is listed, never shown, and cannot be enabled —
 `422 unknown_card` — so no row for a feature that does not exist reaches the
-database. That is what lets `medications` and `appointments` reserve their keys
-now without anyone seeing an empty medication card. Cards a profile has never
-touched have no row and fall back to the registry defaults, so a card added by
-a later PRD appears without a data migration.
+database. That is what let `medications` reserve its key through PRD 3 and 4
+without anyone seeing an empty medication card, and what `appointments`,
+`symptoms` and the rest are still doing. Cards a profile has never touched
+have no row and fall back to the registry defaults, so a card added by a later
+PRD appears without a data migration — which is exactly how `medications`
+became available and visible in PRD 5.
 
 ### Privacy
 
@@ -404,13 +468,21 @@ Counts for the Health overview, and nothing else:
   "total_sections": 7,
   "percent": 42,
   "active_conditions": 1,
-  "active_medications": 2
+  "active_medications": 2,
+  "active_symptoms": 2,
+  "symptom_updates_this_week": 4
 }
 ```
 
-No condition name, medication name, allergen or note body appears here, so the
-overview — and the optional Today card that shows the same figure — cannot
-leak sensitive detail. A test asserts that.
+No condition name, medication name, allergen, symptom name or note body appears
+here, so the overview — and the optional Today card that shows the same figure —
+cannot leak sensitive detail. A test asserts that.
+
+The symptom figures are **separate from the condition counts and outside the
+completeness figure** (PRD 6, sections 6 and 48). `total_sections` stays 7:
+symptoms are listed in the Health tab but are not one of the sections somebody
+fills in, because having none logged is a good state and a percentage that rose
+because somebody felt unwell would be grotesque.
 
 `percent` is equal weight across the seven sections, rounded down, and is
 informational only. Nothing is blocked by an incomplete profile.
@@ -438,6 +510,456 @@ does not return it.
 Health logs name the resource and the action and stop —
 `health.conditions.create success`. A record's values never appear in a log,
 an error message or an analytics event.
+
+## Medications (PRD 5)
+
+Schedules, doses, adherence and supply. Every route is nested under the
+profile the records belong to, exactly as the health record is, and uses the
+same `OwnedProfile` dependency — so the authorization rule is written once.
+The full model, the time-zone policy and the status transitions are in
+[medication-system.md](../architecture/medication-system.md).
+
+**A medication *record* is PRD 4's** (`/profiles/{id}/medications`). These
+routes are about *when to remind somebody about it*, which is a different
+thing and lives in different tables.
+
+**None of these endpoints needs the robot.** The one robot-facing route is
+documented at the end of this section; nothing else refers to a device.
+
+### Schedules
+
+```http
+GET    /api/v1/profiles/{profile_id}/medication-schedules
+POST   /api/v1/profiles/{profile_id}/medication-schedules
+GET    /api/v1/profiles/{profile_id}/medication-schedules/{id}
+PATCH  /api/v1/profiles/{profile_id}/medication-schedules/{id}
+DELETE /api/v1/profiles/{profile_id}/medication-schedules/{id}
+POST   /api/v1/profiles/{profile_id}/medication-schedules/{id}/pause
+```
+
+`GET` takes optional `medication_id` and `active` filters. `DELETE` answers
+`204`.
+
+**Create**
+
+```json
+{
+  "medication_id": "…",
+  "schedule_type": "daily",
+  "timezone": "Europe/London",
+  "start_date": "2026-09-13",
+  "end_date": null,
+  "times": [{ "time_of_day": "08:00:00", "weekday": null }]
+}
+```
+
+`timezone` is **required and has no default**. A schedule that quietly fell
+back to UTC would remind somebody in London at the wrong time for half the
+year. It is an IANA name; an unknown one is `422 unknown_timezone`.
+
+`schedule_type` is `daily` or `specific_days`. A `daily` schedule's times must
+have no `weekday`; a `specific_days` schedule's times must all have one. Both
+are `422 invalid_schedule`, as are no times at all, the same time twice, more
+than 12 times, and an `end_date` before the `start_date`.
+
+Creating a schedule fills its dose window immediately, so the app can show the
+first upcoming dose and schedule its notification without another round trip.
+
+**`PATCH`** rebuilds *future* doses only. Nothing already recorded is touched,
+including earlier the same day. `times` is all-or-nothing: send the whole list
+or none of it. `medication_id` cannot be changed — moving reminders to a
+different medication is a new schedule, not an edit.
+
+**`POST .../pause`** takes `{"paused": true|false}`. Pausing withdraws future
+doses and stops generation; the schedule, the medication and every recorded
+dose are kept.
+
+### Doses
+
+```http
+GET  /api/v1/profiles/{profile_id}/medication-doses?from_date=&to_date=&medication_id=
+GET  /api/v1/profiles/{profile_id}/medication-doses/today?local_date=
+POST /api/v1/profiles/{profile_id}/medication-doses/{id}/taken
+POST /api/v1/profiles/{profile_id}/medication-doses/{id}/snooze
+POST /api/v1/profiles/{profile_id}/medication-doses/{id}/skip
+```
+
+Ranges are in the user's **own local days**, not UTC days. `/today` takes the
+date on the client's clock, the same way the daily check-in does. Both reads
+replenish first, so a client that has not opened the app for a while sees
+missed doses recorded rather than a row of stale `scheduled` entries.
+
+A dose carries three values that are **derived on every read, never stored**:
+
+```json
+{
+  "status": "scheduled",
+  "window": "overdue",
+  "late": false,
+  "can_snooze": true
+}
+```
+
+`window` is `upcoming` | `due` | `overdue` | `completed`. `late` means a dose
+was taken after its grace period — a fact about a time, not a judgement.
+
+**There is no `PATCH` on a dose.** A dose moves by *doing* something to it, so
+every transition, every supply decrement and every idempotency rule stays in
+one service. No client ever sets `status` or `source`.
+
+**Actions**
+
+| Route | Body | Notes |
+| --- | --- | --- |
+| `…/taken` | `{"action_at": "…"}` (optional) | Idempotent; decrements supply once |
+| `…/snooze` | `{"minutes": 10 \| 30 \| 60}` | `409 snooze_limit_reached` after 3 |
+| `…/skip` | `{"reason_code": …, "reason_text": …, "action_at": …}` | All optional |
+
+All three answer with the stored dose and whether anything changed:
+
+```json
+{
+  "dose": { "…": "…" },
+  "applied": true,
+  "supply_remaining": 9,
+  "low_supply": false
+}
+```
+
+`applied: false` means the dose was already in the state asked for — a
+re-sent action, or a robot agreeing with what the person already recorded. The
+dose comes back either way, so a client reconciling a queued action adopts the
+server's answer instead of retrying.
+
+`action_at` is **when the user pressed the button**, which is not when the
+request arrived: an offline action may be hours old by the time it syncs. If
+the stored dose already has a newer `action_at`, the stored answer stands.
+
+`reason_code` is one of `none`, `feeling_unwell`, `ran_out`,
+`clinician_advised`, `too_late`, `other`. It is stored exactly as chosen and
+**never interpreted** — nothing follows from it.
+
+Acting on a `cancelled` dose is `409 dose_not_actionable`. An unknown id is
+`404 dose_not_found`.
+
+### Adherence
+
+```http
+GET /api/v1/profiles/{profile_id}/medication-adherence?days=7&medication_id=&to_date=
+```
+
+```json
+{
+  "taken": 6, "skipped": 1, "missed": 0, "total": 7, "percent": 86,
+  "from_date": "2026-09-07", "to_date": "2026-09-13"
+}
+```
+
+`taken / (taken + skipped + missed)`. Cancelled and future doses are excluded.
+`percent` is **null** when `total` is zero — "0%" for a week with nothing
+scheduled would say something about the person that the data does not. The
+counts are returned so a client can state the denominator rather than showing
+a bare figure.
+
+### Supply and refills
+
+```http
+GET   /api/v1/profiles/{profile_id}/medication-supply
+PATCH /api/v1/profiles/{profile_id}/medication-supply/{medication_id}
+POST  /api/v1/profiles/{profile_id}/medication-supply/{medication_id}/refill
+```
+
+`PATCH` creates the record on first use, so there is no separate "enable
+tracking" call. Omitting a field leaves it; sending `null` clears it.
+
+`POST .../refill` takes `{"remaining_doses": 30, "refilled_on": "2026-09-13"}`
+and **replaces** the count rather than adding to it.
+
+`low` is returned per medication and is true only when tracking is on, a count
+exists, and the user has set a threshold. Nura never invents a threshold and
+never estimates how long a supply will last.
+
+### The future robot action
+
+```http
+POST /api/v1/device-actions/medication-doses/{dose_id}/taken
+Authorization: Bearer <device token>
+```
+
+Authenticated by a **device token**, never by a user's access token — the
+robot does not hold one. The device must be claimed *and* linked to a profile,
+and the dose must belong to that profile; anything else is `404`, so a robot
+with a valid token learns nothing about ids elsewhere.
+
+Recorded with `source = robot_voice`. If the person already marked the dose
+taken or skipped, their record stands and `applied` is false: a robot that
+mishears must not be able to rewrite what somebody said about their own
+medication.
+
+```json
+{ "dose_id": "…", "status": "taken", "applied": true }
+```
+
+The response is deliberately thin — no medication name, no dose, no supply
+count. **No hardware is involved:** the contract is real and tested against a
+seeded device token, and no claim is made that a physical robot has spoken.
+
+---
+
+## Symptoms (PRD 6)
+
+Episodes, entries, photos and safety-netting. Every route is nested under the
+profile the records belong to and uses the same `OwnedProfile` dependency as the
+health record and the medication routes, so the authorization rule is written
+once. The full model is in
+[symptom-system.md](../architecture/symptom-system.md).
+
+**A symptom is not a condition.** PRD 4's `/profiles/{id}/conditions` holds what
+somebody has been told they have; these routes hold what they are experiencing.
+Nothing converts one into the other, in either direction.
+
+**None of these endpoints needs the robot, and none involves speech.** PRD 6's
+conversational flow runs in the app as text; the server sees the same entries the
+manual form produces, with `source` recording which flow it came from.
+
+### Episodes
+
+```http
+GET    /api/v1/profiles/{profile_id}/symptoms
+POST   /api/v1/profiles/{profile_id}/symptoms
+GET    /api/v1/profiles/{profile_id}/symptoms/summary
+GET    /api/v1/profiles/{profile_id}/symptoms/{episode_id}
+PATCH  /api/v1/profiles/{profile_id}/symptoms/{episode_id}
+DELETE /api/v1/profiles/{profile_id}/symptoms/{episode_id}
+POST   /api/v1/profiles/{profile_id}/symptoms/{episode_id}/resolve
+POST   /api/v1/profiles/{profile_id}/symptoms/{episode_id}/recur
+```
+
+`GET` takes three filters and no more (PRD 6, section 49): `active=true` for what
+is ongoing, `status=` for one status, and `name=` for a case-insensitive contains
+on the name only. There is deliberately no search across notes.
+
+An episode is one **bout**. A symptom that comes back is a new episode linked to
+the old one, which is what `/recur` creates.
+
+**Create.** Both flows end at one Save, so the episode and its first observation
+arrive together — splitting them would leave an episode with no description
+behind it whenever the second call failed.
+
+```http
+POST /api/v1/profiles/{profile_id}/symptoms
+```
+
+```json
+{
+  "name": "Headache",
+  "body_site": "behind both eyes",
+  "first_noticed_date": "2026-09-27",
+  "first_noticed_text": "suddenly, this morning",
+  "source": "manual_app",
+  "first_entry": {
+    "client_entry_id": "entry-a4a2470e65c5",
+    "source": "manual_app",
+    "severity": 5,
+    "change_state": "worsening",
+    "character": "throbbing",
+    "associated_symptoms": ["nausea"],
+    "negated_items": ["vomiting"]
+  }
+}
+```
+
+**Response `201`** — or **`200`** with `created: false` when the first entry's
+`client_entry_id` has been seen before, which is what makes an offline retry safe
+(PRD 6, section 61).
+
+```json
+{ "episode": { "…": "the stored episode, with its entries" }, "created": true }
+```
+
+`source` accepts only `manual_app` and `guided_app`. A request claiming
+`robot_voice_future` or `caregiver_future` is refused with `422`: those values are
+readable but not writable (PRD 6, section 57).
+
+Onset carries at most one precision — an instant, a date or a year. Sending two
+is a `422`, so "I think it was 2024" stays a year rather than becoming the 1st of
+January.
+
+**An episode read** carries the latest entry, a count, and the derived safety
+block:
+
+```json
+{
+  "id": "…",
+  "name": "Headache",
+  "status": "active",
+  "first_noticed_text": "suddenly, this morning",
+  "previous_episode_id": null,
+  "entry_count": 3,
+  "latest_entry": { "severity": 6, "change_state": "worsening", "…": "…" },
+  "safety": {
+    "worsening": true,
+    "reasons": ["reported_worsening", "severity_increase"],
+    "notice": "You have recorded this as worsening. If it keeps getting worse, …",
+    "urgent": false
+  }
+}
+```
+
+`safety` is derived on every read, never stored — a value that means "how this is
+going right now" is wrong the moment it is written. `worsening` is true only
+because the user recorded a change: they chose it, their own severity rose by two
+or more across two saved entries, or they added an associated symptom. **Severity
+alone never counts**, whatever the number (PRD 6, section 78).
+
+`urgent` is **false in every shipped deployment.** The red-flag rules exist, are
+tested, and are switched off until a clinician has reviewed them and their
+wording (PRD 6, section 44).
+
+**Resolve** is idempotent and keeps everything — every entry, every photo. A
+second call keeps the original `resolved_at` rather than pushing it forward.
+
+**Recur** is refused with `409 symptom_episode_not_resolved` while the episode is
+still ongoing: that is a follow-up, not a recurrence.
+
+**Delete** removes the episode, its entries and its stored photos. It exists for
+a symptom logged by mistake; a symptom that has ended is resolved instead, and
+the app says which is which before asking.
+
+### Entries
+
+```http
+GET    /api/v1/profiles/{profile_id}/symptoms/{episode_id}/entries
+POST   /api/v1/profiles/{profile_id}/symptoms/{episode_id}/entries
+PATCH  /api/v1/profiles/{profile_id}/symptoms/{episode_id}/entries/{entry_id}
+DELETE /api/v1/profiles/{profile_id}/symptoms/{episode_id}/entries/{entry_id}
+```
+
+Newest first. A follow-up carries only what changed — nothing re-states the
+original description (PRD 6, section 47):
+
+```json
+{
+  "client_entry_id": "entry-99887766",
+  "source": "manual_app",
+  "severity": 7,
+  "change_state": "worsening",
+  "associated_symptoms": ["nausea", "light sensitivity"]
+}
+```
+
+**Response `201`** with `created: true`, or **`200`** with `created: false` for a
+replay. A replay returns the stored entry **unchanged**: a retry is not an edit,
+and letting one overwrite the entry would turn a dropped response into a way of
+silently rewriting history.
+
+```json
+{
+  "entry": { "…": "the stored entry" },
+  "created": true,
+  "safety": { "worsening": true, "reasons": ["reported_worsening"], "…": "…" }
+}
+```
+
+Every field except `recorded_at` is optional, and `recorded_at` defaults to the
+server's clock. The app sends the moment the user saved it, which may be hours
+earlier if the phone was offline.
+
+Three list fields keep what somebody hedged rather than flattening it (PRD 6,
+section 24):
+
+```json
+{
+  "associated_symptoms": ["nausea"],
+  "negated_items": ["vomiting"],
+  "uncertain_items": ["dizziness"],
+  "context_dependent_items": ["only when I stand up"]
+}
+```
+
+Adding an entry to a **resolved** episode does not reopen it. A symptom that has
+come back is a recurrence, which is its own deliberate action.
+
+`severity` is `0`-`10` or null. `change_state` is `improving`, `same`,
+`worsening` or `unsure` — `unsure` being a real answer, stored as one.
+
+### Photos
+
+```http
+POST   …/symptoms/{episode_id}/entries/{entry_id}/photos
+GET    …/symptoms/{episode_id}/entries/{entry_id}/photos/{photo_id}/content
+DELETE …/symptoms/{episode_id}/entries/{entry_id}/photos/{photo_id}
+```
+
+Upload is `multipart/form-data` with a `file` part and an optional
+`client_photo_id`, which makes a retried upload return the stored photo rather
+than adding a second one.
+
+```json
+{
+  "id": "…",
+  "symptom_entry_id": "…",
+  "content_type": "image/jpeg",
+  "byte_size": 184320,
+  "created_at": "…"
+}
+```
+
+**There is no URL and no storage key in that body**, and there is no signed URL
+anywhere. The bytes come from the `/content` route, which re-checks the account,
+the profile, the episode, the entry and the photo before serving anything, and
+answers `Cache-Control: private, no-store` (PRD 6, section 63).
+
+JPEG, PNG and HEIC/HEIF are accepted, and the declared type is checked against
+the file's own header: a mislabelled upload is `415 photo_type_unsupported`
+rather than being stored under a type it is not. Too large is `413
+photo_too_large`; more than five on one entry is `409 photo_limit_reached`.
+
+**Nothing analyses these images** (PRD 6, section 32). No classification, no
+wound assessment, no rash identification. They are stored and handed back to the
+person they belong to.
+
+### Summary
+
+```http
+GET /api/v1/profiles/{profile_id}/symptoms/summary
+```
+
+```json
+{
+  "profile_id": "…",
+  "active_count": 2,
+  "worsening_count": 1,
+  "recent_updates_count": 3,
+  "has_episodes": true
+}
+```
+
+Counts only: no diagnosis, no risk score, no total (PRD 6, section 51).
+`recent_updates_count` counts distinct **episodes** written about in the last
+week, not entries — somebody who checked in on one headache five times has
+updated one symptom.
+
+`has_episodes` is what lets Today leave the symptom card out entirely for
+somebody who has never logged one.
+
+### Errors
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `symptom_episode_not_found` | 404 | No such episode for this profile |
+| `symptom_entry_not_found` | 404 | No such entry, or not on this episode |
+| `symptom_photo_not_found` | 404 | No such photo, or not on this entry |
+| `symptom_episode_not_resolved` | 409 | Recurrence asked for an ongoing symptom |
+| `photo_limit_reached` | 409 | This entry already has the maximum photos |
+| `photo_too_large` | 413 | Over `max_photo_bytes` |
+| `photo_type_unsupported` | 415 | Not an image, or not what it claimed to be |
+
+Every not-found is a `404` rather than a `403`, at every depth — including within
+one account. An entry id from another of the same profile's episodes is answered
+the same way as one that does not exist.
+
+---
 
 ## Rules for every future endpoint
 

@@ -63,6 +63,7 @@ export default function HealthSectionScreen() {
   }
 
   const items = records.data ?? [];
+  const footer = spec.footerLink ?? null;
 
   return (
     <Screen
@@ -132,6 +133,17 @@ export default function HealthSectionScreen() {
             <AppText variant="caption" tone="secondary">
               Tap a {spec.singular} to change or remove it.
             </AppText>
+          ) : null}
+
+          {footer ? (
+            // Health is what the medication *is*; Care is when to be reminded
+            // about it. This is the crossing (PRD 5, sections 6 and 30).
+            <Button
+              label={footer.label}
+              variant="secondary"
+              onPress={() => router.push(footer.route as never)}
+              accessibilityHint={footer.hint}
+            />
           ) : null}
         </View>
       )}

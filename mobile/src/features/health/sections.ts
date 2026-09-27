@@ -149,10 +149,17 @@ export const SECTIONS: Record<RecordSection, SectionSpec> = {
     title: 'Medications',
     singular: 'medication',
     emptyMessage: 'No medications added yet.',
-    // No reminders in PRD 4, and the copy says so rather than implying them.
+    // PRD 5 added reminders, so the copy points at them instead of ruling
+    // them out -- while keeping the boundary clear: this list is the record,
+    // and the reminders are in Care (PRD 5, section 30).
     description:
-      'What you take, and what you have taken before. Nura keeps the record only — it does not remind you yet.',
+      'What you take, and what you have taken before. Add one here, then set up reminders for it in Care.',
     titleField: 'name',
+    footerLink: {
+      label: 'Set up reminders',
+      route: '/medications/schedules',
+      hint: 'Opens medication reminders, where you choose when to be reminded',
+    },
     subtitle: (record) =>
       joined([
         joined([text(record, 'dose'), text(record, 'dose_unit')])?.replace(' · ', ' ') ??

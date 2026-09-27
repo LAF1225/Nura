@@ -1,4 +1,10 @@
-export { apiRequest, type RequestOptions } from './client';
+export {
+  apiRequest,
+  apiUpload,
+  mediaSource,
+  type RequestOptions,
+  type UploadFile,
+} from './client';
 export {
   ApiError,
   apiErrorMessage,
