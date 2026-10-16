@@ -156,4 +156,37 @@ class UserSettings(Base, TimestampMixin):
     #: keeps that obvious at every layer.
     daily_checkin_reminder_time: Mapped[str | None] = mapped_column(String(5))
 
+    # --- care notifications (PRD 9, section 48) ---
+    # What the *primary user* wants to hear about from the people helping them.
+    # Here rather than on the profile because this is a preference of the person
+    # holding the phone, and because per-account notification preferences
+    # already live in this table.
+    #
+    # None of these gates anything in the app. Section 48 requires an approval
+    # request to stay visible in-app even when push is off, so the pending
+    # suggestion list ignores all four -- they decide whether a *notification*
+    # is scheduled and nothing else.
+    notify_caregiver_messages: Mapped[bool] = mapped_column(
+        nullable=False, server_default="true"
+    )
+    notify_suggestion_requests: Mapped[bool] = mapped_column(
+        nullable=False, server_default="true"
+    )
+    notify_appointment_suggestions: Mapped[bool] = mapped_column(
+        nullable=False, server_default="true"
+    )
+    # --- safety monitoring (PRD 10, section 6) ---
+    #: When this person's day ends, as ``HH:MM`` local time, for the "until
+    #: bedtime" monitoring preset. Null until they set one, and section 6 is
+    #: explicit that it must come from an explicit setting -- Nura does not
+    #: infer a bedtime from behaviour, and the Start screen asks for one rather
+    #: than guessing. Stored the same way ``daily_checkin_reminder_time`` is,
+    #: for the same reason: a wall-clock time is a string, and the session
+    #: resolves it against a zone when it needs an instant.
+    safety_bedtime: Mapped[str | None] = mapped_column(String(5))
+
+    notify_routine_suggestions: Mapped[bool] = mapped_column(
+        nullable=False, server_default="true"
+    )
+
     user: Mapped[User] = relationship(back_populates="settings")

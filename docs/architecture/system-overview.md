@@ -1,6 +1,6 @@
 # System overview
 
-Status: PRD 6 — Symptom Tracking & Structured Symptom Communication.
+Status: PRD 8 — Nura AI, voice, personality and memory.
 
 > The robot itself has not been built. The firmware and the pairing flow exist
 > and are tested as far as software allows, but no part of the phone-to-robot
@@ -48,6 +48,7 @@ lives. The backend is the only component trusted with authorisation.
 | Firmware       | `firmware/xiao_esp32s3`, compiles for three environments; no board exists to run it |
 | Today          | Greeting, daily wellbeing check-in, Important Today, configurable cards, robot status — none of it needs a robot |
 | Check-ins      | One per person per local day, editable, queued on the device when offline |
+| Caregivers     | Invitations, eight permission categories, suggestions a person approves, family messages, an emergency-contact chain nothing walks — none of it needs a robot |
 | Dashboard      | Cards resolved from a server registry; show, hide and reorder from Customize Today |
 | Health record  | Conditions, medications, allergies, doctors, procedures, notes and blood type — full CRUD, owned by a profile |
 | Health setup   | Gradual, resumable, skippable; an equal-weight completeness figure that blocks nothing |
@@ -57,17 +58,21 @@ lives. The backend is the only component trusted with authorisation.
 | Symptoms       | Episodes and entries, a manual form and a deterministic guided conversation over one shared draft, severity and change tracking, history, resolution and recurrence |
 | Symptom photos | Optional, private, served only through an authenticated route; never analysed |
 | Safety-netting | One reviewed non-diagnostic sentence, shown only on a change the user recorded; the urgent rules are built, tested and disabled |
-| Database       | `users`, `user_settings`, `profiles`, `account_profile_roles`, `devices`, `provisioning_sessions`, `daily_checkins`, `dashboard_preferences`, `medical_conditions`, `medications`, `allergies`, `clinicians`, `procedures`, `medical_notes`, `medication_schedules`, `medication_schedule_times`, `medication_doses`, `medication_supply`, `symptom_episodes`, `symptom_entries`, `symptom_photos` |
-| Endpoints      | `/health`, `/api/v1/version`, `/api/v1/me`, `/api/v1/onboarding`, `/api/v1/profiles`, `/api/v1/devices`, `/api/v1/today`, `/api/v1/daily-checkins`, `/api/v1/dashboard-preferences`, the health record, the medication routes and the symptom routes under `/api/v1/profiles/{id}/…`, and `/api/v1/device-actions/…` for the robot |
+| Appointments   | Manual entry with its own time zone, three history lists, optional clinician link, cancel / complete / reopen, two local reminders |
+| Questions      | The user's own words, in their own order, with deterministic neutral prompts they may accept |
+| Doctor reports | A frozen one-page summary built from what the user ticked, an optional appendix, versioned, exported as a PDF through the share sheet |
+| Database       | `users`, `user_settings`, `profiles`, `account_profile_roles`, `devices`, `provisioning_sessions`, `daily_checkins`, `dashboard_preferences`, `medical_conditions`, `medications`, `allergies`, `clinicians`, `procedures`, `medical_notes`, `medication_schedules`, `medication_schedule_times`, `medication_doses`, `medication_supply`, `symptom_episodes`, `symptom_entries`, `symptom_photos`, `appointments`, `appointment_questions`, `appointment_reports` |
+| Endpoints      | `/health`, `/api/v1/version`, `/api/v1/me`, `/api/v1/onboarding`, `/api/v1/profiles`, `/api/v1/devices`, `/api/v1/today`, `/api/v1/daily-checkins`, `/api/v1/dashboard-preferences`, the health record, the medication, symptom and appointment routes under `/api/v1/profiles/{id}/…`, and `/api/v1/device-actions/…` for the robot |
 
-Deliberately absent: appointments, AI or chat, caregiver permissions, emergency
-detection, push notifications, HealthKit and Health Connect. The daily check-in is
-a wellbeing prompt with three answers and an optional note -- it is not symptom
-tracking, and the symptom system is separate from it. Medication reminders record
-what somebody did and interpret none of it: no interaction checking, no dose
-advice, and nothing inferred from a skip reason. Symptom records are the same:
-no diagnosis, no likelihood, no cause attributed to a medication, and no analysis
-of a photograph.
+Deliberately absent: AI or chat, caregiver permissions, emergency detection,
+push notifications, calendar sync, a clinician portal, HealthKit and Health
+Connect. The daily check-in is a wellbeing prompt with three answers and an
+optional note -- it is not symptom tracking, and the symptom system is separate
+from it. Medication reminders record what somebody did and interpret none of it:
+no interaction checking, no dose advice, and nothing inferred from a skip reason.
+Symptom records are the same: no diagnosis, no likelihood, no cause attributed to
+a medication, and no analysis of a photograph. A doctor report restates what was
+recorded and adds nothing: no impression, no probable cause, no treatment.
 
 ### How a robot joins an account
 
@@ -114,6 +119,8 @@ mobile/
 │   ├── health/               The health record: setup, sections, forms
 │   ├── medications/          Schedules, doses, history, supply, skip sheet
 │   ├── symptoms/             Overview, log, Talk to Nura, review, history, detail
+│   ├── appointments/         List, form, detail, prepare, questions, select,
+│   │                         preview, report versions
 │   └── +not-found.tsx
 └── src/
     ├── components/           Screen, Card, Button, AppText, List, …
@@ -121,6 +128,7 @@ mobile/
     ├── features/health/      Section specs, form logic, API, hooks, drafts
     ├── features/medications/ Schedule rules, dose wording, reminders, queue
     ├── features/symptoms/    Shared draft, conversation engine, photos, queue
+    ├── features/appointments/ Form draft, report selection, reminders, export
     ├── constants/            Runtime config; the only reader of process.env
     ├── hooks/                useToday, useDevices, network status, …
     ├── navigation/           Tab definitions (single source of tab order)
@@ -203,7 +211,9 @@ backend/
 │   ├── services/             The rules: onboarding, devices, check-ins, cards
 │   │   ├── medications/      Schedules, doses, supply, adherence, summary
 │   │   ├── symptoms/         Episodes, entries, photos, safety, summary
-│   │   └── storage.py        Private object storage for symptom photos
+│   │   ├── appointments/     Visits, questions, periods, preparation,
+│   │   │                     snapshot, PDF, report versions
+│   │   └── storage.py        Private object storage: photos and report PDFs
 │   └── main.py
 ├── alembic/                  Migrations
 ├── scripts/                  Development fixtures, plus the medication
@@ -267,7 +277,14 @@ provisioning_sessions  (one robot may join one account, briefly)
 
 The health record -- six tables, all owned by a profile and all cascading
 with it -- is described in [health-data.md](health-data.md) rather than
-repeated here.
+repeated here. PRD 13's one table, ``data_exports``, is in
+[privacy-security-reliability.md](privacy-security-reliability.md). So are the four feature areas built on top of it: medications in
+[medication-system.md](medication-system.md), symptoms in
+[symptom-system.md](symptom-system.md), and appointments and reports in
+[appointment-and-report-system.md](appointment-and-report-system.md). PRD 12's
+eight daily-life tables are in
+[daily-life-assistant.md](daily-life-assistant.md), and nothing in them is
+medical -- they belong to a profile the same way, and cascade the same way.
 
 ```text
 medical_conditions   medications   allergies
@@ -336,12 +353,19 @@ app that opens with six spinners and fills in piece by piece.
 server registry, given a key in `DashboardCardKey`, and given one entry in the
 client's renderer map. A key the client has no renderer for is skipped, and a
 card whose feature does not exist yet is never shown and cannot be enabled —
-which is how `medications` and `appointments` reserve their keys now without
-anyone seeing an empty medication card.
+which is how `routines` and `hydration` reserve their keys now without anyone
+seeing an empty card.
 
-Important Today is the one part of Today the user cannot switch off. It is
-empty in PRD 3, but it will carry medication and appointment reminders, and a
-reminder someone hid months ago is a reminder that failed.
+Two of the real cards draw *nothing at all* until they are relevant: medications
+for somebody with no schedules, symptoms for somebody who has never logged one.
+Appointments is deliberately different -- it draws "No upcoming appointments" and
+a way to add one, because checking when the next visit is, or noting one down, is
+a reason people open the app (PRD 7, section 9).
+
+Important Today is the one part of Today the user cannot switch off. It carries
+doses that are overdue, due or next up; an appointment today or tomorrow; and a
+symptom the user recorded as worsening -- in that order, by how soon each needs
+something. A reminder someone hid months ago is a reminder that failed.
 
 ### Refresh policy
 
@@ -532,6 +556,348 @@ ownership chain for every byte — there is no public URL and no signed one
 The whole model, including the conversation engine, the offline queue and the
 safety boundary, is in [the symptom system](symptom-system.md).
 
+## The appointment and report system
+
+PRD 7 is where the record points outward: appointments, the questions to ask at
+them, and a one-page summary somebody hands a clinician.
+
+```text
+appointments                  a visit, entered by hand
+    +-- appointment_questions     what the person wants to ask
+    +-- appointment_reports       a frozen summary, and the PDF made from it
+```
+
+**A report is a snapshot, not a query.** The finished text is stored on the row
+when it is generated, so a symptom entry corrected next week cannot change what a
+document handed over last week says, and re-rendering an old version produces the
+same file byte for byte (PRD 7, sections 30 and 72).
+
+**One file writes prose.** `services/appointments/snapshot.py` is the only module
+that turns a value into a sentence, which is what lets a test read *every* string
+a report can contain and fail on a diagnosis, a likelihood, an attributed cause or
+a graded adherence figure (sections 3, 18, 20 and 45).
+
+**The user decides what is in it.** Symptoms are ticked one at a time -- there is
+no single symptoms switch, because section 15 forbids Nura deciding which matters
+more -- and a section that was not ticked is absent rather than empty.
+
+**Regeneration adds a version and overwrites nothing** (section 31), and a
+report's PDF is stored and served exactly like a symptom photo: private storage, a
+server-built key, no URL in any response, and the whole ownership chain re-checked
+for every byte (sections 35 and 52).
+
+**Manual entry only.** No calendar sync, and no column that implies one
+(section 4). Appointment times carry their own IANA zone, and the display strings
+are rendered by the server because that is where the time-zone database is
+(section 42).
+
+The whole design, including the report period rules, the offline behaviour and
+the export path, is in
+[appointment-and-report-system.md](appointment-and-report-system.md).
+
+## The Nura assistant
+
+PRD 8 is where Nura starts answering. A conversation in the app, backed by a
+model the app never talks to directly.
+
+```text
+app ──▶ /profiles/{id}/assistant/…  ──▶  NuraAssistantService
+                                              │
+              policy ─ prompts ─ context ─ tools ─ provider ─▶ the model
+```
+
+**The model is behind one method.** `AIModelProvider.complete()` is the whole
+boundary, and `anthropic_provider.py` is the only file in the backend that
+imports a provider SDK. Swapping provider means writing a sibling of it and
+changing `AI_PROVIDER` (PRD 8, section 10).
+
+**The guarantees are structural, not prompted.** Of ten tools, nine read and
+one *proposes* adding a question for the user to confirm. There is no tool that
+edits a dose, deletes a record or reaches another profile -- and no tool takes a
+profile id at all, so the model has nowhere to put one (sections 15 and 90).
+
+**What is deterministic does not depend on the model.** "Nura, emergency"
+short-circuits to a fixed notice with no provider call; serious mode is decided
+from the user's words; and the section 73 sentences are *placed* around a reply
+rather than requested of the model. All of it behaves the same whichever
+provider is configured, which is what makes the guardrail tests mean something
+(section 74).
+
+**Almost nothing about the record reaches the prompt.** The context block is a
+date and three counts. Names, conditions, notes and appointment titles are read
+through tools, when a question needs them (sections 12 and 51).
+
+**Memory is a preference, not a record.** A short list of how somebody likes to
+be spoken to, always agreed to before it is saved, with no category for anything
+clinical and no foreign key into the health record (sections 40, 45 and 46).
+
+**Nothing here needs the robot**, and `conversation_messages.source` is how the
+robot becomes another input to the same service rather than a parallel one
+(sections 4 and 70).
+
+**PRD 9 gave every tool a permission.** `ToolContext` carries the granted
+categories and both `specs` and `run` filter on them, so a caregiver-scoped
+assistant is not shown a tool it lacks the category for and is refused if it asks
+anyway (PRD 9, section 63). Three tools are owner-only: the two that span
+categories a caregiver is granted separately, and the one that writes -- PRD 9
+section 64 reserves a caregiver's changes for a suggestion a person approves.
+There is no caregiver chat endpoint yet; the layer section 63 names is built and
+tested, the surface that would use it is not.
+
+The build is in [nura-assistant.md](nura-assistant.md); what Nura will and will
+not say, and what is *not* enforced, is in
+[assistant-safety.md](assistant-safety.md).
+
+## Caregivers and family communication
+
+PRD 9 is the first time somebody other than the account holder can see part of a
+person's record. One decision shapes everything else about it.
+
+**A caregiver is a second authorization path, not a third role.**
+
+```text
+account ──┬── account_profile_roles ──▶ profile     the owner path (PRD 0-8)
+          │      self / setup_helper                 deps.get_owned_profile
+          │
+          └── caregiver_relationships ─▶ profile     the caregiver path (PRD 9)
+                 + caregiver_permissions             deps.get_care_scope
+```
+
+`account_profile_roles` is what every profile-scoped route from PRD 0-8
+authorizes through. Putting caregivers in it would have granted the complete
+health record, every symptom photo and every doctor report **without changing a
+single route**. So caregivers reach a separate, narrower surface, and a test
+walks eight PRD 0-8 endpoints with every category granted and expects 404 from
+each.
+
+**A role grants nothing.** Eight permission categories, one row each, default
+deny; `role` is a label that no code in the authorization path reads
+(sections 10 and 54).
+
+**A caregiver proposes; a person applies.** There is no caregiver route that
+writes to a medication schedule or an appointment. The five changes they may
+propose are the whole vocabulary -- `change_medication_dose` is not refused, it
+does not exist (section 85) -- and approval re-checks the permission against the
+*current* relationship before calling the ordinary service.
+
+**A missing permission is indistinguishable from nothing recorded.** The
+caregiver home omits a section that was not granted rather than returning it
+empty, and the answer to both "not your profile" and "not your category" is 404
+(section 18).
+
+**Two things are named and not finished, each said out loud.** Audio calling
+has a real interface and an implementation that refuses, because section 38
+forbids simulating a call. Photo messages are reserved in the vocabulary and
+cannot be sent. The third -- "nothing contacts an emergency contact" -- stopped
+being true in PRD 10, which walks the chain PRD 9 built and orders.
+
+The build is in [caregiver-and-family.md](caregiver-and-family.md); the
+reasoning is in
+[0012-caregiver-access-and-approval.md](../decisions/0012-caregiver-access-and-approval.md).
+
+## Safety monitoring and SOS
+
+PRD 10 is the first thing in this system that could matter to somebody who is
+not holding their phone. Which means the governing constraint is not
+completeness but honesty: **nothing may claim more than happened.**
+
+```text
+Start monitoring            explicit, time-boxed, server decides when it ends
+    │
+    ├── possible_* trigger (device token, monitoring on)
+    │        └── check-in ──┬── "I'm okay"   ──▶ resolved, nobody contacted
+    │                       ├── "I need help"──▶ escalate now
+    │                       └── no answer    ──▶ [second prompt] ──▶ escalate
+    │
+    └── manual SOS / "Nura, emergency"  (works with monitoring off)
+             └── escalate now
+
+escalate = caregivers with `safety_alerts` get an in-app alert record,
+           then the PRD 9 contact chain in priority order,
+           then an outcome: complete / partial / failed /
+           no_contacts / providers_not_configured
+```
+
+**Describe, never diagnose.** Every sensor-observed event type begins with
+`possible_`; there is no confidence column on an event; one module writes all
+safety prose and a test reads every string in it for the words section 52
+forbids.
+
+**Nura does not watch unless asked.** A passive trigger with no active session
+is refused with `monitoring_not_active`. A caregiver cannot start monitoring --
+not from a route, and not through the assistant.
+
+**Every deadline is a column, not a timer.** `response_deadline_at` is a
+timestamp, the worker's query is a comparison, and an app that was force-quit
+mid-countdown changes nothing. That splits two claims section 80 wants kept
+apart: *state correctness*, which every read provides, and *timely
+escalation*, which needs `scripts/safety_maintenance.py` -- a script no
+deployment here schedules, and whose absence is documented rather than papered
+over.
+
+**Nothing claims a delivery.** The only channel that works is an in-app alert
+record, recorded as `attempted` and never `delivered`; `delivered` exists in
+the vocabulary and no code path writes it. Push, SMS and calling report
+`not_configured` with stable codes, and the capability endpoint says so in
+words -- because hiding a control is not the same as saying it does not exist.
+
+**No detector exists and none is validated.** `DETECTORS` is empty, which is
+what makes `robot_detection: not_connected` derived rather than hard-coded.
+
+The build is in [safety-monitoring.md](safety-monitoring.md); the reasoning is
+in
+[0013-safety-monitoring-and-escalation.md](../decisions/0013-safety-monitoring-and-escalation.md).
+
+## The robot's display and companion experience
+
+PRD 11 built the whole software layer that drives the robot's screen, and the
+robot still does not exist. That is the shape of the stage rather than a gap in
+it: nothing in the app or the backend depends on the robot, so the layer can be
+complete and the hardware can arrive later and connect to it.
+
+```text
+       what is true now                           what the robot shows
+  ┌───────────────────────┐                  ┌─────────────────────────┐
+  │ PRD 5  a dose is due  │   presenter      │  one card at a time,    │
+  │ PRD 7  a visit soon   │  ──refresh──▶    │  or the companion face  │
+  │ PRD 9  unread message │                  │                         │
+  │ PRD 10 live safety    │                  └─────────────────────────┘
+  │ PRD 8  the chosen mode│                      device_presentations
+  └───────────────────────┘
+
+  robot: heartbeat ──▶ presentation_pending ──▶ GET next ──▶ render ──▶ ack
+```
+
+**Reconciliation, not notification.** No service in PRD 0-10 was modified to
+call into the robot. `presenter.refresh` reads what is currently true and makes
+the queue match, which is what makes the robot additive (no workflow can fail
+because of it), makes a stale card impossible (there is no event that could
+have been missed), and makes reconnecting unremarkable (a robot that comes back
+gets what is true now, with no replay).
+
+The one exception is the assistant, because a reply is an utterance rather than
+a state. It goes through a two-function module that finds the profile's robots,
+does nothing when there are none, and cannot raise.
+
+**A presentation is a request, not a render.** `sent` means the backend handed
+the envelope over; `displayed` means a device said it drew it. One function
+writes `displayed_at` and a CHECK constraint means there cannot be another, so
+the distinction survives into every screen and every log.
+
+**A capability is what the device proved, not what it compiled.** Twelve keys
+rather than one `robot_ready` boolean, and four states where `not_verified`
+means "the driver is there and nothing physical has been shown to work". Only a
+device can report that state: the backend has never seen a build, so it says
+`not_connected` instead of guessing.
+
+**The screen is in a room other people walk through**, which is why a
+medication reminder defaults to "Medication / Reminder due" and the redaction
+happens when the card is built rather than when it is drawn.
+
+**Serious moments have no face.** A safety prompt, an emergency and a serious
+reply are information, and the mode-to-face table maps them to nothing — so
+section 28's rule that expression must never carry a health judgement is
+structural rather than remembered.
+
+Nothing has ever been drawn on a panel, nothing has ever been played, and no
+physical robot has acknowledged anything. The build is in
+[robot-companion-experience.md](robot-companion-experience.md), the wire
+contract in
+[the presentation protocol](../device/presentation-protocol.md), and the
+reasoning in
+[0014-robot-presentation-architecture.md](../decisions/0014-robot-presentation-architecture.md).
+
+
+## Daily life: tasks, reminders, alarms and routines
+
+PRD 12 is the stage where Nura stops being only a health product. Eight tables,
+and the division is a boundary rather than a tidy-up: a task has no occurrence
+rows and may have no time at all, a reminder generates concrete occurrences, an
+alarm generates nothing because nobody asks about last Tuesday's seven o'clock,
+and a routine generates runs with step completions against them.
+
+Three things are worth knowing here; the rest is in
+[daily-life-assistant.md](daily-life-assistant.md).
+
+**The recurrence engine is PRD 5's, called rather than copied.** A reminder, an
+alarm and a routine resolve a wall-clock time through
+`services.medications.doses.occurrence_instant`, so the two daylight-saving
+days a year behave identically across all four features and there is no second
+policy to disagree with.
+
+**A task carries two timestamps.** `content_updated_at` and
+`status_changed_at`, because a completion must not be undone by an unrelated
+title edit arriving from another device -- and a content edit cannot reach the
+status at all, since `TaskUpdate` has no status field.
+
+**The three external capabilities are `not_configured`, derived.** Weather,
+news and an external calendar ask whether a provider is both named and
+implemented; none is. A deployment that sets a provider name nothing implements
+gets a warning and `not_configured`, not a feature that sometimes answers.
+
+Nothing in the daily-life services knows the robot exists, and nothing in
+PRD 0-11 changed shape to accommodate this stage -- the one exception is the
+`routines` caregiver permission, which gained the data it was reserved for.
+
+**What is not true:** the app has never been run on a physical phone, so no
+notification and no alarm has ever fired.
+
+## Privacy, security and reliability
+
+PRD 13 is the stage that added almost no behaviour and found three things that
+were already wrong. It is worth reading that way round, because the hub, the
+export and the deletion path are the easy half.
+
+**A profile switch left the previous person's data in the cache.** The list of
+query-key prefixes cleared on a switch had stopped being maintained:
+twenty-six keys were missing or wrong, from PRD 3, 5, 6, 7, 10 and 12 -- the
+health record, dose history, adherence, symptom entries, appointment questions,
+doctor reports, check-ins, safety status, tasks, routines. Two entries that were
+present matched nothing, because the real keys are ``['health', 'summary', ...]``
+and a prefix compares element by element.
+
+**Signing out cleared the cache and nothing on disk.** Seventeen storage keys
+and seven persisted stores survived it, so a second person signing in on the
+same phone inherited the previous one's drafts, Today cache and offline queues.
+
+**There was no deletion path at all**, and a naive one would have orphaned
+every private file: 68 foreign keys cascade from a profile and none can reach
+object storage.
+
+Neither of the first two was found by reading the lists. Both were found by
+tests that read the *source* -- every ``queryKey`` literal, every ``'nura...'``
+storage key -- and require each one to be classified, in both directions. The
+reverse direction is what caught the key that matched nothing.
+
+Three things PRD 13 added:
+
+**One security suite that enumerates routes from the application.** Every stage
+from PRD 9 onwards wrote a denial test against a hand-typed list of paths; none
+covered the next stage's routes. ``test_security_matrix.py`` walks the router
+tree, classifies each route by which authorization dependency it reaches, and
+requires 404 from every one of the 169 owner routes for a second owner and for
+a caregiver holding every permission. A route PRD 14 adds is covered the day it
+is written.
+
+**An export whose contents are a declared list rather than a strip-list.**
+``services/privacy/tables.py`` states for every table which columns are
+exported and which are excluded and why, and a test compares that against the
+live metadata: a column a later PRD adds is unclassified, and unclassified
+fails.
+
+**A deletion service that owns the files.** Keys are read before the rows go,
+because afterwards there is no way to find them, and the files are deleted
+after the transaction commits, because a file removed for a transaction that
+rolled back cannot be undone.
+
+Full detail in
+[privacy-security-reliability.md](privacy-security-reliability.md); the data
+classification and retention in [data-retention.md](data-retention.md).
+
+**What is not true:** no penetration test and no compliance certification. The
+security suite is evidence about the boundaries this code enforces, and nothing
+more.
+
 ## Security posture
 
 These hold now and constrain every later PRD:
@@ -583,8 +949,27 @@ The owner's own name is never the device's identity.
 type NuraMode = 'normal' | 'focus' | 'sleep' | 'privacy' | 'safety' | 'emergency';
 ```
 
-Declared so later PRDs share one vocabulary. Nothing reads or switches on these
-values yet, and no behaviour is attached to them.
+PRD 11 adds the robot's own view of the same idea rather than a second
+framework (section 4). Four of its ten modes are this setting seen from the
+robot's side — `normal` becomes `companion` — and the other six are facts about
+the moment, derived on every read: `information` when a card is queued,
+`safety` and `emergency` from PRD 10's live state, `offline` from heartbeats,
+`setup` before setup is finished, and `error`, which only the robot ever says.
+
+PRD 8 implements the first four for the assistant, stored on
+`assistant_preferences.mode`: Focus shortens replies and raises nothing
+unasked, Sleep quietens Nura without touching a reminder, and Privacy stops
+memory suggestions, keeps the record out of the prompt and says so on screen
+(sections 66-68).
+
+`safety` and `emergency` are deliberately **not** stored values. A mode the app
+can select but nothing acts on would be a promise Nura cannot keep, so they
+wait for the PRD that gives them behaviour.
+
+Serious mode is not in this list either. It is derived per message from what
+was said and recorded on the message, because seriousness is a property of a
+moment rather than of a person -- and a user who could switch it on could
+switch it off (section 69).
 
 ## Real-time communication
 
@@ -652,7 +1037,39 @@ Nothing in the symptom system acts on its own: no emergency service is called, n
 caregiver is messaged, no monitoring is activated and no medication is changed
 (section 43).
 
-The daily check-in is the fourth place this bites. A `not_great` answer is
+**PRD 8 is where the boundary stopped being only a matter of which sentences
+were written**, because the sentences are generated. Three layers hold it:
+capabilities that do not exist (no tool edits a dose or reaches another
+profile), deterministic policy that runs on the user's own words whichever
+model is configured, and the boundary stated in the prompt. Those are not
+equally strong, and
+[assistant-safety.md](assistant-safety.md) has a section headed **What is not
+enforced** that says which is which -- including that nothing scrubs a model's
+output, because a filter that half works is worse than one that is honestly
+absent.
+
+**The doctor report is where PRD 7 had to hold it in writing**, because a
+report leaves the app. Everything in one restates what was recorded: counts, the
+user's own change answers, their own words in quotation marks. No impression, no
+probable cause, no treatment, no "this is consistent with" (section 45). The
+adherence line is counts with the denominator beside them and is never called
+good or bad (section 18); the wellbeing line is three counts and nothing read into
+them (section 20); and a symptom the person hedged or denied appears as hedged or
+denied (section 47).
+
+Every sentence a report can contain is written in one module and frozen into the
+stored snapshot, so a test reads all of it -- including the appendix -- and fails on
+any of the above. Every page carries the same line:
+
+> This is a summary of information recorded in the Nura app. It is not a
+> diagnosis, an assessment or medical advice.
+
+And the question prompts are held to the same rule. "Would you like to ask about
+your worsening headaches?" restates the user's own answer; nothing offers a
+hypothesis about why, because that would be a clinical opinion in the shape of a
+helpful question (sections 3 and 24).
+
+The daily check-in is the fifth place this bites. A `not_great` answer is
 acknowledged -- "Thanks for checking in." -- and nothing more. It does not
 suggest a cause, does not recommend an action, does not raise an alert, and
 does not notify anybody. A test asserts the wording carries no such language.

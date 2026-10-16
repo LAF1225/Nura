@@ -7,11 +7,17 @@ for, whether they have checked in, whether their Nura is connected, and which
 cards to place.
 
 PRD 5 added the first feature area to actually join it -- the next medication
-dose, three counts, and anything running low -- and PRD 6 adds the second:
-which symptoms are active, and whether the person has recorded any of them as
-getting worse. What is still *not* here is as deliberate as what is: no
-appointments and no routines, because those modules do not exist yet, and a
-summary that invented them would be a summary of nothing (PRD 3, ss16, 21).
+dose, three counts, and anything running low. PRD 6 added the second: which
+symptoms are active, and whether the person has recorded any of them as getting
+worse. PRD 7 adds the third: the next appointment, and whether it has been
+prepared for. PRD 12 adds the fourth: tasks due today,
+reminders waiting, and how today's routines are going.
+
+**Daily life sits below everything medical here, and that is structural.**
+PRD 12 section 18 ends with the rule -- *daily-life items must never obscure
+safety-critical items* -- so the Important Today list is assembled in a fixed
+order in ``api.v1.today``, with medications first and daily life last. Nothing
+in the daily-life summary can change where its rows land.
 """
 
 from dataclasses import dataclass, field
@@ -24,8 +30,10 @@ from app.services import checkins as checkin_service
 from app.services import dashboard as dashboard_service
 from app.services import devices as device_service
 from app.services import profiles as profile_service
+from app.services.appointments import summary as appointment_service
 from app.services.medications import doses as dose_service
 from app.services.medications import summary as medication_service
+from app.services.productivity import summary as daily_life_service
 from app.services.symptoms import summary as symptom_service
 
 
@@ -74,10 +82,19 @@ class TodaySummary:
     #: has never logged a symptom, which is what lets Today leave the card
     #: out entirely (PRD 6, section 39).
     symptoms: symptom_service.SymptomSummary | None = None
-    #: The Important Today section (PRD 3, section 21). PRD 5 is the first
-    #: thing to put anything in it -- doses that are overdue, due, or next up,
-    #: in that order. Ordinary reminders, never framed as emergencies
-    #: (PRD 5, section 29).
+    #: Null for the same reason. Unlike the two above, a false
+    #: ``has_appointments`` does *not* hide the card: PRD 7 section 9 specifies
+    #: what an empty appointments card says.
+    appointments: appointment_service.AppointmentSummary | None = None
+    #: Tasks, reminders, routines and alarms (PRD 12, sections 18 and 19). Null
+    #: for an account with no profile yet. ``has_anything`` is False for
+    #: anybody who has never made one, which is what keeps the card invisible
+    #: until it is relevant.
+    daily_life: daily_life_service.DailyLifeSummary | None = None
+    #: The Important Today section (PRD 3, section 21). Doses that are
+    #: overdue, due or next up; an appointment today or tomorrow; a symptom
+    #: recorded as worsening. Ordinary reminders, never framed as emergencies
+    #: (PRD 5, section 29; PRD 7, section 10).
     important: list[object] = field(default_factory=list)
 
 
@@ -153,4 +170,9 @@ def build_summary(
         cards=dashboard_service.resolve_cards(db, profile.id),
         medications=medication_service.build_summary(db, profile.id, local_date, now),
         symptoms=symptom_service.build_summary(db, profile.id, now),
+        appointments=appointment_service.build_summary(db, profile.id, local_date, now),
+        # Replenishes reminder occurrences and routine runs on the way, the
+        # same way ``dose_service.replenish`` above does -- which is why PRD 12
+        # needs no background worker to be correct (PRD 12, section 63).
+        daily_life=daily_life_service.build_summary(db, profile.id, local_date, now),
     )

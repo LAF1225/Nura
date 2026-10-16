@@ -22,6 +22,8 @@ import {
   useMedicationReminderRefresh,
   useSyncPendingDoseActions,
 } from '../../src/features/medications/hooks';
+import { useSyncPendingAppointments } from '../../src/features/appointments/hooks';
+import { useSyncPendingDailyLife } from '../../src/features/productivity/hooks';
 import { useSyncPendingSymptoms } from '../../src/features/symptoms/hooks';
 import { useIsOffline } from '../../src/hooks/useNetworkStatus';
 import {
@@ -50,6 +52,14 @@ export default function TodayScreen() {
   useSyncPendingDoseActions();
   // And for a symptom described while offline (PRD 6, section 59).
   useSyncPendingSymptoms();
+  // And for an appointment or a question written down offline (PRD 7, s53).
+  useSyncPendingAppointments();
+  // And PRD 12's four queues, which were mounted only under `/daily/*` until
+  // PRD 13 section 32. An action queued there, then an app restart that lands
+  // here, left four queues unflushed until somebody happened to open the
+  // daily-life screens again -- which is the "second chance after being
+  // offline" the four above were given and this one was not.
+  useSyncPendingDailyLife();
   useRefreshOnFocus(today.refetch, today.dataUpdatedAt);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -134,6 +144,11 @@ export default function TodayScreen() {
               // The same reasoning: a symptom somebody logged yesterday is
               // still what they logged, so the cached copy is worth showing.
               symptoms: summary.symptoms,
+              appointments: summary.appointments,
+              // The same reasoning again: a task due an hour ago is still due,
+              // and a cached copy is worth showing while the queue catches up
+              // (PRD 12, sections 37 and 38).
+              dailyLife: summary.dailyLife,
               // Offline we genuinely do not know whether the robot is
               // connected, and a cached "Online" would break the rule that
               // presence only ever comes from the backend.

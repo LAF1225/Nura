@@ -961,6 +961,1865 @@ the same way as one that does not exist.
 
 ---
 
+## Appointments and doctor reports (PRD 7)
+
+Appointments, the questions to ask at them, and the one-page summary somebody
+hands a clinician. Every route is nested under the profile the records belong to
+and uses the same `OwnedProfile` dependency as the health record, medication and
+symptom routes, so the authorization rule is written once. The full model is in
+[appointment-and-report-system.md](../architecture/appointment-and-report-system.md).
+
+**Entry is manual.** There is no calendar sync in PRD 7 and no field that implies
+one — no external id, no sync token, no provider (section 4).
+
+**A report is a snapshot, not a query.** The content is frozen when it is
+generated, so a symptom entry corrected next week cannot change what a document
+handed over last week says (section 30).
+
+**None of these endpoints needs the robot.** Nothing in the feature knows one
+exists.
+
+### Appointments
+
+```http
+GET    /api/v1/profiles/{profile_id}/appointments
+POST   /api/v1/profiles/{profile_id}/appointments
+GET    /api/v1/profiles/{profile_id}/appointments/summary
+GET    /api/v1/profiles/{profile_id}/appointments/{appointment_id}
+PATCH  /api/v1/profiles/{profile_id}/appointments/{appointment_id}
+DELETE /api/v1/profiles/{profile_id}/appointments/{appointment_id}
+POST   /api/v1/profiles/{profile_id}/appointments/{appointment_id}/cancel
+POST   /api/v1/profiles/{profile_id}/appointments/{appointment_id}/complete
+POST   /api/v1/profiles/{profile_id}/appointments/{appointment_id}/reopen
+```
+
+`GET` takes one filter, `scope=`, with three values: `upcoming` (soonest first),
+`past` and `cancelled` (most recent first). Omitted, it returns everything.
+
+**An appointment is cancelled or completed through its own route**, never by
+PATCHing a status, so the status and its timestamp can never disagree. There is
+no `status` field on the update body at all.
+
+**Nothing infers `missed`.** An appointment whose time has passed is listed under
+`past` and keeps the status `scheduled` until the user says what happened
+(section 7).
+
+**Create.**
+
+```http
+POST /api/v1/profiles/{profile_id}/appointments
+```
+
+```json
+{
+  "title": "Cardiology follow-up",
+  "scheduled_at": "2026-10-02T14:30:00Z",
+  "timezone": "Europe/London",
+  "appointment_type": "specialist",
+  "clinician_id": "3f1c…",
+  "location_name": "City Hospital",
+  "notes": "Bring the previous scan.",
+  "reminders_enabled": true,
+  "client_appointment_id": "appointment-a4a2470e65c5"
+}
+```
+
+Only `title`, `scheduled_at` and `timezone` are required; PRD 7 section 8 asks
+for the rest to stay optional. `clinician_id` must be one of this profile's own
+clinicians or the request is refused — otherwise an appointment could read another
+account's contact details back out.
+
+**Idempotent through `client_appointment_id`.** A replay returns the stored
+appointment with `created: false` and a `200`, so an offline draft cannot become
+two appointments (section 53).
+
+```json
+{
+  "appointment": {
+    "id": "b91e…",
+    "title": "Cardiology follow-up",
+    "appointment_type": "specialist",
+    "status": "scheduled",
+    "preparation_status": "not_started",
+    "scheduled_at": "2026-10-02T14:30:00Z",
+    "timezone": "Europe/London",
+    "local_date": "2026-10-02",
+    "day_label": "2 October 2026",
+    "time_label": "3:30 PM",
+    "when_label": "Tomorrow at 3:30 PM",
+    "relative_day": "Tomorrow",
+    "clinician": { "id": "3f1c…", "name": "Dr Ahmed Khan", "specialty": "Cardiology" },
+    "location_name": "City Hospital",
+    "reminders_enabled": true,
+    "question_count": 3,
+    "report_count": 1,
+    "questions": [],
+    "reports": []
+  },
+  "created": true
+}
+```
+
+**The date labels are rendered by the server** (section 42). An appointment has
+to be shown in *its own* time zone, which needs the IANA database; doing it here
+means one implementation of "Tomorrow at 3:30 PM" and no time-zone arithmetic in
+the app. `relative_day` is only ever `Today`, `Tomorrow`, `Yesterday` or null.
+
+**`preparation_status` is never set by a client.** The server works it out from
+what exists: `not_started` with no questions and no report, `in_progress` with at
+least one question, `complete` once a report has been generated.
+
+**Complete** takes the optional post-visit fields from section 38, and sending it
+again does not blank what was written the first time:
+
+```json
+{ "visit_notes": "Continue at a lower intensity.", "follow_up_date": "2026-12-01" }
+```
+
+### Questions
+
+```http
+GET    /api/v1/profiles/{profile_id}/appointments/{appointment_id}/questions
+POST   /api/v1/profiles/{profile_id}/appointments/{appointment_id}/questions
+PUT    /api/v1/profiles/{profile_id}/appointments/{appointment_id}/questions/order
+PATCH  /api/v1/profiles/{profile_id}/appointments/{appointment_id}/questions/{question_id}
+DELETE /api/v1/profiles/{profile_id}/appointments/{appointment_id}/questions/{question_id}
+```
+
+`text` is stored exactly as typed (section 23). Nothing rewrites it, and there is
+no field recording that a question came from a suggestion — once accepted, it is
+theirs.
+
+`PUT .../order` takes the list the client is displaying and takes position from
+that order, which removes the whole class of duplicate-position bugs. Ids that
+are not on the appointment are ignored rather than refused: a reorder is cosmetic,
+and failing it because a question was deleted on another device would be worse
+than accepting what is left.
+
+`PATCH` carries `text`, `is_answered` and `answer_note` — the user's record of
+what they were told (section 39), never treated as verified clinical data.
+
+**Idempotent through `client_question_id`**, so a question added offline lands
+once however many times the queue retries.
+
+### Preparation
+
+```http
+GET /api/v1/profiles/{profile_id}/appointments/{appointment_id}/prepare
+    ?preset=since_last_visit|7_days|30_days|90_days|custom
+    &period_start=YYYY-MM-DD&period_end=YYYY-MM-DD
+```
+
+One request for the whole review (section 49): the appointment, the period,
+recent symptoms, active medications, adherence, check-ins, the health background,
+medical notes, the questions so far, and neutral question suggestions.
+
+Reads only. Preparing changes nothing about the records being prepared, so the
+route may be called again every time the user moves the period.
+
+**The period explains itself** (section 14):
+
+```json
+{
+  "period": {
+    "start": "2026-08-30",
+    "end": "2026-09-28",
+    "label": "30 August to 28 September 2026",
+    "preset": "30_days",
+    "requested_preset": "since_last_visit",
+    "note": "Nura has no earlier appointment with this clinician, so it can’t work out when you last met. Showing the last 30 days.",
+    "since_label": null,
+    "days": 30
+  }
+}
+```
+
+`preset` is what was applied and `requested_preset` what was asked for. "Since my
+last visit" needs a **linked clinician** and an earlier appointment with them;
+two appointments that merely share a typed title are not evidence of the same
+doctar, so it falls back to 30 days and says why.
+
+A period never runs past today, and it ends on the appointment's own day or
+today, whichever comes first.
+
+**Nothing in the response is ranked or interpreted.** Symptoms are ordered by
+when they were last written about; there is no severity ordering and no flag
+saying which matter. An *ongoing* symptom with no entries in the period is
+included, reporting `entry_count: 0` — a symptom nobody has updated for six weeks
+is the one people forget to mention.
+
+`suggestions` are deterministic prompts built from the review (section 24). There
+is no model behind them, and nothing is added until the user accepts one.
+
+`default_selection` is what the report screen starts from: every section on
+except medical notes, and every symptom in the review ticked. The narrowing is
+the user's.
+
+### Reports
+
+```http
+POST   /api/v1/profiles/{profile_id}/appointments/{appointment_id}/reports
+GET    /api/v1/profiles/{profile_id}/appointments/{appointment_id}/reports
+GET    /api/v1/profiles/{profile_id}/appointments/{appointment_id}/reports/{report_id}
+GET    /api/v1/profiles/{profile_id}/appointments/{appointment_id}/reports/{report_id}/pdf
+DELETE /api/v1/profiles/{profile_id}/appointments/{appointment_id}/reports/{report_id}
+```
+
+**Generate** (section 50's payload):
+
+```json
+{
+  "period_preset": "30_days",
+  "selection": {
+    "include": {
+      "conditions": true,
+      "allergies": true,
+      "procedures": true,
+      "blood_type": true,
+      "medications": true,
+      "adherence": true,
+      "daily_checkins": true,
+      "medical_notes": false,
+      "questions": true
+    },
+    "symptom_episode_ids": ["9d21…"],
+    "symptom_note_entry_ids": [],
+    "medication_ids": null,
+    "checkin_note_dates": [],
+    "medical_note_ids": [],
+    "focus": "Headaches since starting the new tablet",
+    "include_appendix": true,
+    "include_skip_reason_notes": false
+  },
+  "client_report_id": "report-7c1f0a"
+}
+```
+
+`include` keys not sent keep their defaults, so a client turning one section off
+sends one field. `medication_ids: null` means the active ones; an explicit empty
+list means none. **Symptoms are chosen one by one** — there is no single symptoms
+switch, because PRD 7 section 15 forbids Nura deciding which matters more.
+
+The response carries the version and its frozen content:
+
+```json
+{
+  "report": {
+    "id": "c4b8…",
+    "version": 2,
+    "status": "ready",
+    "period_label": "30 August to 28 September 2026",
+    "include_appendix": true,
+    "generated_at": "2026-09-28T09:15:00Z",
+    "generated_label": "28 September 2026, 9:15 AM",
+    "page_count": 2,
+    "byte_size": 4113,
+    "file_name": "Nura_Health_Summary_2026-09-28.pdf",
+    "selection": { "…": "…" },
+    "snapshot": { "…": "the finished report text" }
+  },
+  "created": true
+}
+```
+
+**Regenerating makes a new version and overwrites nothing** (section 31). The
+previous snapshot and the previous file stay exactly as they were, because
+somebody may already have sent it. `client_report_id` makes a double tap produce
+one version rather than two.
+
+**The PDF has no URL.** `…/pdf` returns `application/pdf` with `Cache-Control:
+private, no-store` and a `Content-Disposition` filename that carries a date and
+nothing medical (section 33). The whole chain — account, profile, appointment,
+report — is re-checked for every request, and there is no signed URL anywhere
+(section 52). A `file_storage_key` never appears in any response.
+
+**Deleting a version removes the document as well as the row**, and leaves every
+health record untouched: a report is a copy of what was recorded, and removing
+the copy never removed the original.
+
+### Errors
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `not_found` | 404 | No such appointment, question or report for this profile |
+| `unknown_clinician` | 422 | The clinician is not on this profile's list |
+| `unknown_timezone` | 422 | Not an IANA zone this server can resolve |
+| `invalid_report_period` | 422 | Backwards, missing, in the future, or too long |
+| `too_many_appointments` | 409 | This profile is at the limit |
+| `too_many_questions` | 409 | This appointment is at the limit |
+| `too_many_reports` | 409 | This appointment has too many versions |
+| `report_not_ready` | 409 | The row exists but there is no document behind it |
+
+Every not-found is a `404` rather than a `403`, at every depth — including within
+one account. A report id from another of the same profile's appointments is
+answered the same way as one that does not exist.
+
+---
+
+## The Nura assistant (PRD 8)
+
+Conversations, what Nura remembers, and how it is asked to sound. Every route is
+nested under the profile the conversation belongs to and uses the same
+`OwnedProfile` dependency as the health record, medication, symptom and
+appointment routes, so the authorization rule is written once. The full model is
+in [nura-assistant.md](../architecture/nura-assistant.md), and what Nura will
+and will not say is in
+[assistant-safety.md](../architecture/assistant-safety.md).
+
+**No request chooses a model, a provider or a prompt.** `AI_PROVIDER`,
+`AI_MODEL`, `AI_API_KEY` and `AI_EFFORT` are server-side settings, and no body
+below has a field for any of them (section 76). A client that could pick the
+model could pick a cheaper one with different safety behaviour.
+
+**No request names a profile except in the path**, and no assistant *tool* can
+name one at all — the profile comes from the verified token every time
+(section 90).
+
+**None of these endpoints needs the robot.** Nothing in the feature knows one
+exists.
+
+### The Nura tab
+
+```http
+GET  /api/v1/profiles/{profile_id}/assistant/home?local_date=YYYY-MM-DD
+POST /api/v1/profiles/{profile_id}/assistant/prompts/dismiss
+```
+
+`home` is everything the tab shows in one request: whether the assistant is
+configured at all, the preferences, the five most recent threads, the proactive
+prompts, and how many memories are active.
+
+**Response `200`**
+
+```json
+{
+  "profile_id": "…",
+  "assistant_available": true,
+  "preferences": { "…": "see below" },
+  "recent_conversations": [{ "id": "…", "title": "What does inflammation mean?" }],
+  "prompts": [
+    {
+      "kind": "appointment_preparation",
+      "subject_key": "…appointment id…",
+      "text": "You have an appointment tomorrow — Cardiology follow-up. Would you like to prepare for it?",
+      "route": "/appointments/…/prepare",
+      "action_label": "Prepare now"
+    }
+  ],
+  "memory_count": 3
+}
+```
+
+`assistant_available` is `false` when no provider is configured. The app says so
+once at the top rather than after every message somebody types (section 55).
+
+Every prompt comes from data the app already holds — an appointment with nothing
+prepared, a check-in not done, a medication running low. Nura never raises a
+health concern of its own (section 35). `POST /prompts/dismiss` takes
+`{"kind", "subject_key"}` and answers `204`; the dismissal is scoped to that
+subject, so waving away tomorrow's preparation nudge does not silence next
+month's (section 36).
+
+### Preferences
+
+```http
+GET   /api/v1/profiles/{profile_id}/assistant/preferences
+PATCH /api/v1/profiles/{profile_id}/assistant/preferences
+```
+
+**Response `200`**
+
+```json
+{
+  "profile_id": "…",
+  "personality_preset": "gentle",
+  "warmth": "high",
+  "humour": "low",
+  "talkativeness": "medium",
+  "proactivity": "low",
+  "reminder_firmness": "low",
+  "verbosity": "balanced",
+  "voice_id": "calm",
+  "speaking_speed": "normal",
+  "assistant_language": "en",
+  "custom_instructions": null,
+  "mode": "normal",
+  "matches_preset": true,
+  "voice_playback_available": false
+}
+```
+
+Created with the defaults on first read, so no screen has to handle "you have
+not set Nura up yet". The defaults are exactly the `gentle` preset, so a profile
+that has never opened the Personality screen is *on* one of the four presets
+rather than on an unnamed combination.
+
+**A preset sets the five dials and then stops mattering.** A PATCH carrying both
+a preset and a dial applies the preset first, so "Focused, but warmth high" gets
+Focused's other four dials and the warmth it asked for. `matches_preset` goes
+false once a dial moves, which is what lets the screen say "Gentle (Adjusted)".
+
+**`voice_playback_available` is `false` and stays false in PRD 8.** The voice
+settings are stored for when there is something to speak with (section 27); the
+API says so rather than letting the app imply a control does something today.
+
+**`assistant_language` accepts only `en`.** Section 31 asks for the architecture
+to support more rather than for translation to be faked.
+
+### Memory
+
+```http
+GET    /api/v1/profiles/{profile_id}/assistant/memories
+POST   /api/v1/profiles/{profile_id}/assistant/memories
+PATCH  /api/v1/profiles/{profile_id}/assistant/memories/{memory_id}
+DELETE /api/v1/profiles/{profile_id}/assistant/memories/{memory_id}
+```
+
+A memory is a durable *preference*, never a copy of a health record (sections 40
+and 45). Categories: `preferences`, `communication`, `routine`,
+`personal_context`, `assistant_behavior` — nothing clinical, and 300 characters
+to put it in.
+
+`source` is `user` when it was typed on the memory screen and `conversation`
+when Nura proposed it and the user pressed Remember. There is no third value,
+because no path saves one quietly (section 46).
+
+**`is_active: false` stops it reaching the model** and keeps it on the list to
+switch back on (section 47). **`DELETE` forgets one thing and touches nothing
+else** — removing "call me Baba" does not touch the profile that holds the
+actual name.
+
+### Conversations
+
+```http
+GET    /api/v1/profiles/{profile_id}/assistant/conversations?include_archived=
+POST   /api/v1/profiles/{profile_id}/assistant/conversations
+GET    /api/v1/profiles/{profile_id}/assistant/conversations/{conversation_id}
+PATCH  /api/v1/profiles/{profile_id}/assistant/conversations/{conversation_id}
+DELETE /api/v1/profiles/{profile_id}/assistant/conversations/{conversation_id}
+```
+
+Threads, not one endless log (section 8). `PATCH` takes `title` and `archived`.
+
+**`DELETE` removes the thread and its messages, and nothing else.** No
+medication, symptom, appointment, health record or memory is reachable from a
+conversation — there is no foreign key from any assistant table into any of them
+(section 61).
+
+**A conversation read never contains a system or tool row.** They are stored, so
+a thread can be replayed exactly, and they never leave the server (section 7).
+
+**Response `200`** for one conversation:
+
+```json
+{
+  "conversation": { "id": "…", "title": "…", "message_count": 2 },
+  "messages": [
+    {
+      "id": "…",
+      "role": "assistant",
+      "message_type": "text",
+      "content": "…",
+      "safety_mode": "normal",
+      "meta": {
+        "model": "claude-opus-5",
+        "latency_ms": 1840,
+        "tools": ["get_active_symptoms"],
+        "safety_mode": "normal",
+        "prompt_version": 1,
+        "truncated": false
+      },
+      "pending_action": null
+    }
+  ]
+}
+```
+
+`meta` is the metadata section 80 allows and stops there. No prompt, no chain of
+thought, and nothing a reader would be surprised to find in their own
+conversation.
+
+### Sending a message
+
+```http
+POST /api/v1/profiles/{profile_id}/assistant/conversations/{id}/messages
+```
+
+```json
+{
+  "content": "What does inflammation mean?",
+  "source": "mobile_text",
+  "client_message_id": "msg-…"
+}
+```
+
+`source` accepts only `mobile_text` (section 71). A request claiming to be a
+robot's voice is refused rather than stored, exactly as PRD 6 refuses a symptom
+claiming one.
+
+`client_message_id` is generated by the app **before** it tries to send, so a
+retry after a failure is *answered* rather than recorded a second time.
+
+**Response `201`**
+
+```json
+{
+  "conversation": { "…": "…" },
+  "user_message": { "…": "…" },
+  "reply": null,
+  "failure": "timeout",
+  "failure_message": "That request took too long. Please try again.",
+  "memory_suggestion": null,
+  "suggest_symptom_log": false
+}
+```
+
+**A provider failure is a `201` with `reply: null`, not a 5xx.** The user's
+message *was* recorded, the app has something to show and a Retry to offer, and
+a thread ending in an unanswered question is an accurate account of what
+happened (sections 55 and 56). Nothing is invented and nothing is queued.
+
+`failure` is one of `not_configured`, `timeout`, `rate_limited`, `unavailable`,
+`refused`, `malformed_reply`. `failure_message` is the sentence to show; none of
+them names a provider, a model or a status code (section 98).
+
+`memory_suggestion` is a durable preference Nura noticed. It is an *offer*:
+nothing is stored until the app posts it as a memory (sections 46 and 94).
+
+`suggest_symptom_log` is true when the user described something they have not
+logged, so the app can offer the PRD 6 symptom flow rather than Nura discussing
+it loosely (section 18).
+
+Two replies never come from a model at all. **"Nura, emergency" short-circuits**
+to a fixed `notice` saying escalation is not set up yet, with no provider call
+made (sections 39 and 75). And a **diagnosis or medication-change request** has
+the section 73 sentence placed in front of whatever the model said, by the
+server, every time.
+
+### Confirming a change Nura offered
+
+```http
+POST /api/v1/profiles/{profile_id}/assistant/conversations/{id}/messages/{message_id}/confirm
+```
+
+```json
+{ "confirmed": true }
+```
+
+**This is the only path by which anything Nura suggested becomes a change**
+(section 14). The model does not reach it; a person pressing Confirm does. The
+appointment is re-resolved through the profile-scoped lookup rather than trusted
+from the id recorded earlier, and the action's state moves off `pending`, so
+Confirm cannot be pressed twice.
+
+**Response `200`**
+
+```json
+{
+  "message": { "…": "…", "pending_action": { "state": "confirmed" } },
+  "outcome": { "message_type": "notice", "content": "Added “Ask about dizziness” to your questions for Cardiology follow-up." }
+}
+```
+
+The message's own text is never rewritten — a conversation is a record of what
+was said. The outcome arrives as a new `notice` line.
+
+### Errors
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `not_found` | 404 | No such conversation, message or memory for this profile |
+| `unsafe_instruction` | 400 | A custom instruction or memory tried to disable safety, reveal the prompt, or reach another profile |
+| `rate_limited` | 429 | This profile has sent too many messages this hour |
+| `too_many_memories` | 400 | The memory list is full |
+| `too_many_conversations` | 400 | Delete a thread before starting another |
+| `conversation_full` | 400 | This thread is long enough; start a new one |
+
+`unsafe_instruction` is a rejection rather than a silent ignore. Section 26
+allows either; somebody who types "act as my doctor" and hears nothing will
+believe it worked, and will read the next answer as a doctor's.
+
+The rate limit is a real `429` because the request was not accepted at all —
+nothing was asked of a model and nothing was recorded. A *provider* rate limit
+is different: that is a `201` with `failure: "rate_limited"`, because the user's
+message was stored.
+
+Every not-found is a `404` rather than a `403`, at every depth — including
+within one account.
+
+---
+
+## Caregivers, family messaging and emergency contacts (PRD 9)
+
+**Two authorization paths, and each route is on exactly one.**
+
+``OwnedProfile``   the primary user. The same dependency every PRD 0-8 route
+                   uses, so these routes refuse a caregiver outright.
+``CareScopeDep``   owner *or* active caregiver, carrying the granted
+                   categories. The route then requires one.
+``CaregiverScope`` caregiver only, for the routes the owner has richer
+                   versions of.
+
+**A caregiver cannot reach a single route written before PRD 9.** Not the health
+record, not a symptom photo, not a doctor report, not an assistant conversation.
+Those authorize through `account_profile_roles`, which a caregiver has no row in,
+and the answer is 404 at every depth even with every category granted.
+
+### The caregiver list (the primary user's)
+
+```http
+GET    /api/v1/profiles/{profile_id}/caregivers?include_inactive=
+POST   /api/v1/profiles/{profile_id}/caregivers/invitations
+PATCH  /api/v1/profiles/{profile_id}/caregivers/{relationship_id}
+DELETE /api/v1/profiles/{profile_id}/caregivers/{relationship_id}
+GET    /api/v1/profiles/{profile_id}/caregivers/{relationship_id}/permissions
+PATCH  /api/v1/profiles/{profile_id}/caregivers/{relationship_id}/permissions
+GET    /api/v1/profiles/{profile_id}/care-summary
+```
+
+`POST …/invitations` returns the token **once**:
+
+```json
+{
+  "caregiver": { "id": "…", "status": "pending", "permissions": [ … ] },
+  "token": "nci_…",
+  "expires_at": "2026-10-09T10:00:00Z",
+  "delivery": "share_manually"
+}
+```
+
+`delivery` is in the body because it is a fact the app has to tell the user:
+**Nura cannot send an invitation.** There is no mail sender and no SMS gateway in
+this backend, so the token comes back to the inviter to pass on — the same
+handoff PRD 2 uses for a provisioning token. It is never returned again, never
+logged, and stored only as a SHA-256.
+
+The token is single-use and expires after seven days (PRD 9, sections 13 and 75).
+`DELETE` on a pending relationship withdraws the invitation and kills the link.
+
+`PATCH …/permissions` sends only the keys that changed; the rest are left alone.
+The effect is immediate on the next request — there is no cache to invalidate,
+because every check reads the rows.
+
+`PATCH …/{relationship_id}` changes the **role**, which grants nothing
+(section 54).
+
+### Invitations (the caregiver's side)
+
+```http
+GET  /api/v1/caregiver-permissions
+GET  /api/v1/caregiver-invitations/{token}
+POST /api/v1/caregiver-invitations/{token}/accept
+POST /api/v1/caregiver-invitations/{token}/decline
+GET  /api/v1/caregiver/profiles
+```
+
+All require authentication — stricter than section 81 asks, and matching section
+14's own ordering (sign in, then review). The preview returns a name, a role, the
+permission list and an expiry, and **no profile id**: accepting is done with the
+token, so a holder never learns the key to every other route.
+
+`GET /caregiver-permissions` is the category catalogue with the server's own
+labels and descriptions, so the invitation form shows the same wording as the
+permission screen (section 15).
+
+`GET /caregiver/profiles` is the only route in the API that returns profiles the
+caller does not own. Active relationships only, so a revoked one disappears
+immediately.
+
+### The caregiver's own surface
+
+```http
+GET   /api/v1/profiles/{profile_id}/care/home?local_date=
+PATCH /api/v1/profiles/{profile_id}/care/notifications
+```
+
+**Every section of the home is omitted when the category was not granted** — not
+empty, not zero. Section 18 says the absence of a permission must not leak, and
+an absent key is indistinguishable from a person with nothing recorded. A client
+must therefore keep `null` and `[]` apart:
+
+```json
+{
+  "granted": ["medications"],
+  "granted_without_data": [],
+  "medications": [ … ],
+  "symptoms": null,          // not granted. Says nothing about whether any exist.
+  "reports": null,
+  "calling_available": false
+}
+```
+
+`granted_without_data` lists categories that were granted and unlock nothing:
+`safety_alerts` until PRD 10 (section 94) and `routines` while Nura keeps none.
+
+What a caregiver view deliberately omits: free-text **skip reasons** (section
+19), appointment **notes**, symptom **free text and photos** (section 28), a
+report's **snapshot or PDF** (section 29), and any condition, medication or
+allergy **name** in the health summary — which is counts only (section 67).
+
+### Suggestions
+
+```http
+GET  /api/v1/profiles/{profile_id}/caregiver-suggestions?open_only=
+POST /api/v1/profiles/{profile_id}/caregiver-suggestions          (caregiver)
+POST /api/v1/profiles/{profile_id}/caregiver-suggestions/{id}/approve  (owner)
+POST /api/v1/profiles/{profile_id}/caregiver-suggestions/{id}/decline  (owner)
+POST /api/v1/profiles/{profile_id}/caregiver-suggestions/{id}/cancel   (caregiver)
+```
+
+`action_type` is one of exactly five:
+
+```text
+change_medication_reminder_time   pause_medication_reminder
+resume_medication_reminder        add_appointment
+change_appointment_time
+```
+
+**That is the whole list.** `change_medication_dose`, `delete_condition` and
+`change_diagnosis` are not refused by a rule — there is no action type for them,
+so the request fails schema validation and the database CHECK constraint would
+refuse the row anyway (section 85).
+
+`payload` is validated against that action's own model, with `extra="forbid"`,
+both when the suggestion is created and again at approval.
+
+The response carries the diff section 86 asks for, **read at the moment the
+screen is built** rather than stored:
+
+```json
+{
+  "action_label": "Change a medication reminder time",
+  "status": "pending",
+  "diff": {
+    "subject": "Metformin",
+    "current": "7:00 PM",
+    "proposed": "8:00 PM",
+    "target_missing": false
+  },
+  "caregiver_name": "Ayesha"
+}
+```
+
+Approve applies the change through the ordinary medication or appointment
+service, re-checking the caregiver's permission against the *current*
+relationship first. Approving twice returns the same result rather than applying
+it twice. `decline` takes an optional `note` that is **never returned to the
+caregiver** — the caregiver-facing model has no field for it (sections 25, 88).
+
+### Family messaging
+
+```http
+GET  /api/v1/profiles/{profile_id}/family/threads
+POST /api/v1/profiles/{profile_id}/family/threads
+GET  /api/v1/profiles/{profile_id}/family/threads/{thread_id}/messages?mark_read=
+POST /api/v1/profiles/{profile_id}/family/threads/{thread_id}/messages
+POST /api/v1/profiles/{profile_id}/family/calls
+```
+
+All require `communication`, **on the pairing as well as on the caller** — an
+owner's scope holds every category, so without that a primary user could message
+somebody who was never granted it.
+
+One thread per relationship, which is what keeps one caregiver out of another's
+(section 66). `message_type` is `text` or `check_in`; `photo` is refused, because
+section 33 makes attachments optional and the upload route does not exist.
+
+A check-in sends a `check_in_code`, never a sentence, and the response carries
+the rendered words. The two sides have different lists (sections 35 and 36).
+
+`client_message_id` makes a retry idempotent: a send that timed out after the
+server stored it returns the message that is already there (sections 72, 74).
+
+`POST …/family/calls` answers **`503 calling_not_configured`** in every
+deployment. Section 38 forbids simulating a successful call and no provider is
+configured, so this route cannot return `active`.
+
+### Emergency contacts
+
+```http
+GET    /api/v1/profiles/{profile_id}/emergency-contacts
+POST   /api/v1/profiles/{profile_id}/emergency-contacts
+PATCH  /api/v1/profiles/{profile_id}/emergency-contacts/{contact_id}
+DELETE /api/v1/profiles/{profile_id}/emergency-contacts/{contact_id}
+POST   /api/v1/profiles/{profile_id}/emergency-contacts/reorder
+```
+
+**Owner-only at every verb, reads included** (section 45). There is no
+caregiver-scoped route for an emergency contact anywhere.
+
+`priority` is 1-based, contiguous and server-owned: it is absent from the create
+and patch bodies, and changed by sending the whole order. `reorder` takes the
+list as displayed and renumbers from it.
+
+**Nothing in PRD 9 contacts anybody.** Section 47 puts escalation in PRD 10; this
+builds the chain and nothing reads `priority` to decide who to reach.
+
+### Care notifications
+
+The primary user's four preferences are on `PATCH /api/v1/me`, alongside the
+check-in reminder, because that is where per-account notification preferences
+already live. A caregiver's four are per relationship, on `PATCH
+…/care/notifications`.
+
+**None of them gates anything in the app.** Section 48 requires an approval
+request to stay visible in-app even when push is disabled, so the pending list
+and the Today card ignore all eight. Nothing is delivered yet either way.
+
+### Errors
+
+| code | status | means |
+| ---- | ------ | ----- |
+| `not_found` | 404 | no such profile for you, **or** no such permission on it |
+| `invitation_not_found` | 404 | expired, already used, or never real |
+| `cannot_care_for_self` | 409 | you already own this profile |
+| `already_caregiver` | 409 | you already support this person |
+| `too_many_caregivers` | 409 | ten is the limit |
+| `caregiver_not_found` | 404 | not a caregiver on this profile |
+| `caregiver_not_active` | 409 | pending, declined, expired or revoked |
+| `invalid_suggestion` | 422 | the payload did not match its action type |
+| `suggestion_target_missing` | 409 | the thing it would change has gone |
+| `suggestion_not_pending` | 409 | already answered, or the caregiver lost access |
+| `too_many_suggestions` | 409 | twenty waiting is the limit |
+| `invalid_message` | 422 | empty, too long, or a check-in that side cannot send |
+| `thread_not_found` | 404 | not your thread, or messaging is not granted |
+| `calling_not_configured` | 503 | no audio provider. Every deployment, today. |
+
+A missing permission and a missing relationship are the same `not_found`, so a
+caller cannot distinguish them (section 18).
+
+---
+
+## Safety monitoring, SOS and escalation (PRD 10)
+
+Two authorization paths, the same two PRD 9 established. The monitoring, SOS
+and history routes are **owner-only** — they depend on `OwnedProfile`, which
+walks `account_profile_roles`, so a caregiver is refused by all of them. The
+two alert routes accept an owner *or* an active caregiver and then require
+`safety_alerts`.
+
+A missing permission answers `404`, the same as a missing profile.
+
+### Status and capabilities
+
+```http
+GET /api/v1/profiles/{profile_id}/safety/status
+GET /api/v1/profiles/{profile_id}/safety/capabilities
+```
+
+`status` is everything the Safety screen needs in one request: the session, the
+live event with its escalation attempts, `emergency_mode`, the capability map,
+the contact count, and the standing warnings as sentences. **Reading it
+advances a deadline that has passed**, so the state is correct the moment
+anybody looks.
+
+`capabilities` is section 106's map, and every value is computed from the thing
+itself rather than configured:
+
+```json
+{
+  "capabilities": [
+    { "key": "manual_sos", "state": "available", "label": "Emergency request",
+      "state_label": "Available" },
+    { "key": "push_delivery", "state": "not_configured",
+      "label": "Push notifications", "state_label": "Not set up in this build" }
+  ],
+  "external_delivery_available": false,
+  "warning": "External notifications and calling are not set up in this build. …"
+}
+```
+
+The seven keys and their state in every deployment today: `manual_sos`,
+`in_app_safety_checks` and `caregiver_in_app_alerts` are `available`;
+`push_delivery`, `sms_delivery` and `audio_calling` are `not_configured`;
+`robot_detection` is `not_connected`.
+
+### Monitoring
+
+```http
+POST /api/v1/profiles/{profile_id}/safety/monitoring/start
+POST /api/v1/profiles/{profile_id}/safety/monitoring/stop[?confirm_active_event=true]
+```
+
+The start body sends a **mode**, never an instant:
+
+```json
+{
+  "duration_mode": "1_hour",
+  "timezone": "Europe/London",
+  "response_timeout_seconds": 45,
+  "second_prompt_enabled": false
+}
+```
+
+`duration_mode` is `30_minutes`, `1_hour`, `until_bedtime`,
+`until_turned_off` or `custom` (with `custom_minutes`, 5 to 720).
+`response_timeout_seconds` is one of 15, 30, 45, 60, 90. There is **no
+`ends_at` field**: the server computes it, which is what keeps "do not silently
+extend" a property of one function.
+
+`until_bedtime` with no `safety_bedtime` on the account answers `409
+bedtime_not_set`. Starting while a session is running ends the old one as
+`superseded` and returns the new one.
+
+Stopping while a safety event is live needs `confirm_active_event=true`.
+Stopping does **not** cancel the event — somebody turning monitoring off has
+not said they are all right.
+
+### Events
+
+```http
+GET  /api/v1/profiles/{profile_id}/safety/events
+GET  /api/v1/profiles/{profile_id}/safety/events/{event_id}
+POST /api/v1/profiles/{profile_id}/safety/sos
+POST /api/v1/profiles/{profile_id}/safety/events/{event_id}/respond
+POST /api/v1/profiles/{profile_id}/safety/events/{event_id}/cancel
+POST /api/v1/profiles/{profile_id}/safety/events/{event_id}/false-alarm
+```
+
+`POST /sos` works whether or not monitoring is on, skips the countdown, and
+escalates **inside the request** — so the response already carries the attempt
+list the app shows. `event_type` accepts `manual_sos` or `call_for_help` (the
+"Nura, emergency" contract) and nothing else: a client posting `possible_fall`
+is a `422` from the schema. `client_event_id` makes a retry the same emergency.
+
+`respond` takes `{"response": "im_okay" | "need_help" | "false_alarm"}`. It
+works after escalation has begun: a late "I'm okay" records the answer, skips
+what has not gone out, and leaves the history alone.
+
+An event detail carries the escalation list with **the sentence already
+rendered**:
+
+```json
+{
+  "event_label": "Possible fall",
+  "no_response_label": "No response after 45 seconds.",
+  "escalation_outcome": "partial",
+  "attempts": [
+    { "recipient_label": "Ayesha", "channel": "in_app", "status": "attempted",
+      "line": "In-app alert created for Ayesha." },
+    { "recipient_label": "Spouse", "channel": "voice_call_future",
+      "status": "not_configured", "failure_code": "calling_not_configured",
+      "line": "Phone call for Spouse: not set up in this build." }
+  ],
+  "alert_count": 1
+}
+```
+
+**`status: "delivered"` exists in the vocabulary and nothing in this build ever
+writes it.** `attempted` means it was tried; nobody has confirmed anything.
+
+### Device triggers
+
+```http
+POST /api/v1/device-actions/safety-events
+```
+
+Device token only, like every other `/device-actions` route. **No profile id in
+the body** — there is no field for one, so the profile comes from the device.
+`event_type` is the `possible_*` set plus `test_event`; `idempotency_key` is
+required. `confidence` is accepted and discarded (section 54).
+
+A passive event with monitoring off answers `409 monitoring_not_active`.
+
+**Nothing has ever called this from hardware.** No detector exists; the
+contract is tested with authenticated simulated device requests, which is the
+scope PRD 10 section 115 sets.
+
+### Caregiver safety alerts
+
+```http
+GET  /api/v1/profiles/{profile_id}/care/safety-alerts
+POST /api/v1/profiles/{profile_id}/care/safety-alerts/{alert_id}/acknowledge
+```
+
+Requires `safety_alerts` on an active relationship, re-checked on every
+request rather than inherited from when the alert was created. An alert carries
+a type, two timestamps, the event's status and outcome, and section 37's
+sentence — **and no health data of any kind**.
+
+Listing is what writes `read_at`: it is the only thing in the system that can
+turn "a record exists" into "somebody looked". Acknowledging records one
+timestamp and does **not** resolve the event.
+
+### Errors
+
+| code | status | means |
+| ---- | ------ | ----- |
+| `not_found` | 404 | no such profile for you, no such event, **or** no `safety_alerts` |
+| `bedtime_not_set` | 409 | `until_bedtime` was chosen and no bedtime exists |
+| `invalid_monitoring_duration` | 400 | a custom duration out of bounds, or a timeout that is not an option |
+| `monitoring_source_not_allowed` | 403 | a source PRD 10 does not accept |
+| `monitoring_not_active` | 409 | a passive trigger arrived while monitoring was off |
+| `monitoring_session_not_found` | 404 | not this profile's session |
+| `safety_event_not_found` | 404 | not this profile's event |
+| `safety_event_not_live` | 409 | it already finished — refresh |
+| `safety_event_in_progress` | 409 | stopping monitoring needs confirmation first |
+| `safety_alert_not_found` | 404 | not your alert |
+| `safety_provider_not_configured` | 503 | a provider name nobody implemented |
+
+Provider outcomes are not errors; they are `failure_code` values on an
+attempt: `push_not_configured`, `sms_not_configured`,
+`calling_not_configured`. The last is deliberately the same code PRD 9's
+`POST /family/calls` returns — one code for "Nura cannot ring anybody",
+whichever feature asked.
+
+---
+
+## The robot's display and companion behaviour (PRD 11)
+
+Two sets of routes, authenticating completely differently.
+
+The **app's** routes sit under `/api/v1/devices/{device_id}` and use the rule
+PRD 2 set: a device is reachable only if the signed-in account claimed it, and
+anything else is a 404 rather than a 403. **A caregiver has no route here at
+all** (section 70) — caregiver status grants no robot control, and no caregiver
+scope is resolved anywhere in this file.
+
+The **robot's** routes sit under `/api/v1/device-actions` and are authenticated
+by a device token and nothing else. The profile comes from the device record;
+there is no profile field on any of the three request models, which is section
+69 enforced by the schema rather than by a check somebody could remove.
+
+The wire contract is
+[the presentation protocol](../device/presentation-protocol.md).
+
+### Capabilities
+
+```http
+GET /api/v1/devices/{device_id}/capabilities
+```
+
+```json
+{
+  "device_id": "…",
+  "capabilities": [
+    {
+      "key": "display",
+      "state": "not_verified",
+      "reported_state": "available",
+      "label": "Screen",
+      "state_label": "Not tested yet",
+      "source": "self_test",
+      "reported_at": "2026-10-04T19:30:00Z",
+      "firmware_version": "0.0.9",
+      "stale": true
+    }
+  ],
+  "display_available": false,
+  "text_available": false,
+  "animation_available": true,
+  "audio_available": false,
+  "speech_available": false,
+  "input_available": false,
+  "hardware_note": "The Nura robot has not been built. …"
+}
+```
+
+**All twelve keys are always returned**, including the ones nothing has ever
+reported — a client that only sees the keys that happen to be present is a
+client that silently stops asking about one somebody added. The four states are
+`available`, `unavailable`, `not_verified` and `not_connected`.
+
+`state` is what a screen must act on; `reported_state` is what the device said.
+They differ when `stale` is true — a capability proven by a firmware that is no
+longer running, or one nobody has re-confirmed in 30 days, is downgraded to
+`not_verified`. The downgrade is derived and can only ever move towards *less*
+certainty.
+
+The booleans underneath are derived from the same states, so a settings screen
+cannot decide for itself that audio is available (section 47).
+
+### Preferences
+
+```http
+GET   /api/v1/devices/{device_id}/presentation-preferences
+PATCH /api/v1/devices/{device_id}/presentation-preferences
+```
+
+```json
+{
+  "brightness": 70,
+  "volume": 40,
+  "reduced_motion": null,
+  "effective_reduced_motion": false,
+  "medication_privacy_level": "private",
+  "read_medications_aloud": false,
+  "read_messages_aloud": false,
+  "read_assistant_aloud": false,
+  "sleep_screen_mode": "dim",
+  "face_animation_enabled": true,
+  "family_message_display_enabled": true
+}
+```
+
+**`reduced_motion` has three values and `null` is one of them**: it means
+*follow the account's accessibility preference* (sections 30 and 105).
+`PATCH` therefore inspects which fields were *sent* rather than filtering out
+nulls, and `effective_reduced_motion` is what the null resolves to — computed
+on the server, because a client cannot know.
+
+Every field is answered for a robot that cannot do any of it, which is section
+49: a person may say today that their messages should never be read out, and
+keeping the setting does not imply a speaker exists. Whether it can be honoured
+is the capability endpoint's question.
+
+`brightness` and `volume` are 0–100. The app offers five discrete steps, so a
+future slider needs no migration.
+
+### Presentation history
+
+```http
+GET /api/v1/devices/{device_id}/presentation-history
+```
+
+```json
+{
+  "presentations": [
+    {
+      "id": "…",
+      "presentation_type": "medication_reminder",
+      "status": "sent",
+      "layout": "REMINDER",
+      "source": "medication",
+      "priority": 40,
+      "title": "Medication",
+      "summary": "Reminder due",
+      "sensitive": false,
+      "sent_at": "2026-10-04T19:30:00Z",
+      "displayed_at": null,
+      "ack_state": null,
+      "failure_code": null,
+      "cancel_reason": null,
+      "line": "Medication reminder — sent to Nura"
+    }
+  ]
+}
+```
+
+`line` is the rendered sentence, assembled on the server. **"sent to Nura" and
+"shown" are different claims** (section 14) and a client that composed its own
+sentence from `status` would be a second place that could blur them.
+
+`title` and `summary` come from the stored payload, which the builder already
+reduced to the privacy level in force — so a private medication reminder reads
+as "Reminder due" here too, and there is no path by which the app can read back
+more than the robot received.
+
+Expiry runs before the read, so a row whose moment has passed reads as
+`expired` rather than as `queued`.
+
+### The Nura Device screen's own read
+
+```http
+GET /api/v1/devices/{device_id}/robot-status
+```
+
+```json
+{
+  "device_id": "…",
+  "display_name": "Nura",
+  "connection_status": "online",
+  "last_seen_at": "2026-10-04T19:30:00Z",
+  "mode": "companion",
+  "mode_label": "Companion",
+  "face": "idle",
+  "queue_depth": 1,
+  "current": null,
+  "setup_complete": true,
+  "offline_note": null
+}
+```
+
+Not in PRD 11 section 122's list, which covers the four endpoints the protocol
+needs; this is the screen's own read, assembled server-side for the reason PRD
+10 assembles its safety status there — the mode, the queue depth and the
+current card are three facts that have to agree.
+
+`mode` is derived on every read and never stored (section 4). `current` is the
+presentation the robot said it drew, and it is `null` in every deployment
+today. `offline_note` is section 20's sentence, present only when the robot is
+not online.
+
+Reconciliation runs first, so what the screen shows is what the robot would be
+handed if it asked right now.
+
+### Device: reporting what the hardware is
+
+```http
+POST /api/v1/device-actions/capabilities
+Authorization: Bearer <device token>
+
+{
+  "capabilities": { "display": "not_verified", "speaker": "not_connected" },
+  "source": "self_test",
+  "firmware_version": "0.1.0"
+}
+```
+
+→ `200` with the full map read back.
+
+**This endpoint is the only way `not_verified` ever enters the database**
+(sections 12 and 91). A compiled display driver is not a working screen, the
+backend cannot tell the difference, and so it does not guess — what it knows is
+whether a robot has said anything, and a missing row reads as `not_connected`.
+
+A partial report is normal and erases nothing it leaves out. An unknown key or
+state is a `422`; `source: "default"` is refused, because that value means
+"nobody has said" and a device claiming it would be a contradiction.
+
+### Device: collecting the next presentation
+
+```http
+GET /api/v1/device-actions/presentations/next
+Authorization: Bearer <device token>
+```
+
+→ `200` with an envelope, or **`204`** when there is nothing to show.
+
+Reconciliation runs first, so the answer is built from what is true at the
+moment of the request. That is what makes section 56 hold without special
+handling: a robot unplugged for a week is not handed last Tuesday's "take this
+now", because last Tuesday's dose is not due.
+
+Fetching marks the row `sent` and **nothing else**.
+
+### Device: saying what happened
+
+```http
+POST /api/v1/device-actions/presentations/{presentation_id}/ack
+Authorization: Bearer <device token>
+
+{ "state": "render_started" }
+```
+
+→ `200 { "presentation_id": "…", "status": "displayed", "applied": true }`
+
+The five states are `received`, `render_started`, `render_completed`, `failed`
+and `unsupported`. `failure_code` is optional and must be one of the stable
+codes — never free text (section 67).
+
+**This is the only writer of `displayed_at` anywhere in the codebase**, and a
+CHECK constraint on `device_presentations` means there cannot be another.
+Repeating an acknowledgement is accepted and reports `applied: false`; moving
+backwards is a `409`.
+
+A presentation belonging to another robot answers the same `404` a non-existent
+id answers.
+
+### Heartbeat
+
+`POST /api/v1/devices/heartbeat` gains one field (section 58):
+
+```json
+{ "heartbeat_interval_seconds": 30, "introduce": false,
+  "presentation_pending": true, "server_time": "…" }
+```
+
+A flag and not the presentation. A heartbeat is retried and logged, and a
+medication name travelling in one would eventually sit in a retry log
+(section 67). The robot pays one extra request for a liveness ping that never
+carries anything private.
+
+### Errors
+
+| code | status | means |
+| ---- | ------ | ----- |
+| `device_not_found` | 404 | not a device this account claimed |
+| `unknown_capability` | 422 | a key, state or source this build does not define |
+| `invalid_preference` | 422 | a value outside what the column allows |
+| `presentation_not_found` | 404 | no such presentation **for this device** |
+| `invalid_acknowledgement` | 409 | a transition this presentation cannot make |
+
+A device with no linked profile gets `204` from the fetch rather than an error:
+it is claimed but set up for nobody, and nothing belongs to nobody.
+
+---
+
+## Tasks, reminders, alarms and routines (PRD 12)
+
+Forty-two routes, and the first thing to know is that **four things are kept
+apart** (section 4). They look similar on a screen and they are not the same
+record:
+
+| | has occurrence rows? | time required? | what an action records |
+| --- | --- | --- | --- |
+| task | no | no | a status on the task |
+| reminder | yes, generated ahead | yes | a status on one occurrence |
+| alarm | **none at all** | yes | nothing — "is it ringing" is derived |
+| routine | runs, one per day | yes | a step completion against a run |
+
+An alarm stores no occurrences because nobody asks whether last Tuesday's seven
+o'clock alarm went off; `next_fire_at` and the ringing window come from the
+stored time and the clock. A routine's run covers a *day* rather than a moment,
+which is the one place this module departs from PRD 5's generator
+deliberately — a morning routine is still this morning's at eleven.
+
+Everything is owner-only and lives under `/api/v1/profiles/{profile_id}`,
+except `/care/routines`. Nothing here is medical, and no route reaches a
+medication, a dose or a schedule.
+
+### The summary
+
+```http
+GET /api/v1/profiles/{profile_id}/daily-life/summary
+```
+
+One request for the whole picture: three count blocks, the next alarm, and a
+sentence.
+
+```json
+{
+  "local_date": "2026-03-14",
+  "tasks": { "due_today": 3, "overdue": 1, "open_total": 11 },
+  "reminders": { "due_today": 2, "due_now": 0 },
+  "routines": { "due_today": 1, "in_progress": 1, "completed_today": 0 },
+  "next_alarm_at": "2026-03-15T07:00:00Z",
+  "alarm_count": 2,
+  "summary_label": "3 tasks, 1 routine and 2 reminders today.",
+  "has_anything": true
+}
+```
+
+`has_anything` is false for anybody who has never made one of these, and the
+Today card is then not drawn at all (section 19) — the same rule PRD 6 uses for
+symptoms.
+
+This route is declared **before** the resource routes in the router, so
+`/daily-life/summary` is never read as a resource id.
+
+### Tasks
+
+```http
+GET    /api/v1/profiles/{profile_id}/tasks[?scope=open|completed|archived]
+POST   /api/v1/profiles/{profile_id}/tasks
+GET    /api/v1/profiles/{profile_id}/tasks/{task_id}
+PATCH  /api/v1/profiles/{profile_id}/tasks/{task_id}
+DELETE /api/v1/profiles/{profile_id}/tasks/{task_id}
+POST   /api/v1/profiles/{profile_id}/tasks/{task_id}/complete
+POST   /api/v1/profiles/{profile_id}/tasks/{task_id}/reopen
+POST   /api/v1/profiles/{profile_id}/tasks/{task_id}/archive
+POST   /api/v1/profiles/{profile_id}/tasks/{task_id}/cancel
+```
+
+A task needs a title and nothing else:
+
+```json
+{ "title": "Call the physiotherapist", "priority": "normal",
+  "due_at": "2026-03-14T16:00:00Z", "timezone": "Europe/London",
+  "client_task_id": "…" }
+```
+
+`due_at` is optional, because section 4 says a task may have no time — a thing
+to do is not a thing to do *at* a time, and forcing one would make the feature
+lie about the commitment.
+
+**`PATCH` cannot change a status.** `TaskUpdate` has no `status` field, and the
+four transitions are each their own `POST`. That is section 40's named failure
+made unrepresentable rather than tested for: a title edit leaving one phone
+cannot undo a completion made on another.
+
+The same reason gives a task **two timestamps**. `content_updated_at` moves
+when the words change; `status_changed_at` moves when the state changes; and
+both `PATCH` and the action routes accept `client_updated_at` so a stale write
+is dropped rather than applied. The response says which happened:
+
+```json
+{ "task": { … }, "applied": false, "created": false }
+```
+
+`applied: false` is a success. It means the server already had something newer,
+which is the answer an offline queue needs in order to stop retrying.
+
+Reads carry the derived parts, never stored: `due_label` ("Today, 4:00 PM"),
+`overdue`, `status_label`, `priority_label`, `source_label`.
+
+`POST` with a `client_task_id` seen before returns the existing task with
+`created: false` — the same idempotency rule PRD 5 set for doses.
+
+Limit: 500 open tasks (`409 too_many_tasks`).
+
+### Reminders and their occurrences
+
+```http
+GET    /api/v1/profiles/{profile_id}/reminders
+POST   /api/v1/profiles/{profile_id}/reminders
+GET    /api/v1/profiles/{profile_id}/reminders/{reminder_id}
+PATCH  /api/v1/profiles/{profile_id}/reminders/{reminder_id}
+DELETE /api/v1/profiles/{profile_id}/reminders/{reminder_id}
+POST   /api/v1/profiles/{profile_id}/reminders/{reminder_id}/pause
+POST   /api/v1/profiles/{profile_id}/reminders/{reminder_id}/resume
+POST   /api/v1/profiles/{profile_id}/reminders/{reminder_id}/cancel
+GET    /api/v1/profiles/{profile_id}/reminder-occurrences[?from_date=&to_date=]
+POST   /api/v1/profiles/{profile_id}/reminder-occurrences/{occurrence_id}/complete
+POST   /api/v1/profiles/{profile_id}/reminder-occurrences/{occurrence_id}/dismiss
+POST   /api/v1/profiles/{profile_id}/reminder-occurrences/{occurrence_id}/snooze
+```
+
+```json
+{ "title": "Water the plants", "time_of_day": "18:30",
+  "start_date": "2026-03-14", "recurrence": "weekly",
+  "weekdays": [0, 3], "timezone": "Europe/London",
+  "notification_enabled": true }
+```
+
+`recurrence` is `one_time`, `daily`, `selected_days`, `weekly` or `monthly`.
+`weekdays` is **0 = Monday**, and it is required for `weekly` and
+`selected_days` and refused for the rest. `day_of_month` works the same way for
+`monthly`, and the 31st in a short month lands on the last day rather than
+disappearing.
+
+**The recurrence engine is PRD 5's, called rather than copied.** A wall-clock
+time becomes an instant through `services.medications.doses.occurrence_instant`
+— the same function, so the two daylight-saving days a year behave identically
+for a medication dose and a plant-watering reminder. A test asserts function
+identity, not equivalent behaviour.
+
+Occurrences are generated a fortnight ahead and replenished on read, so a list
+is correct whether or not anything runs on a schedule. An occurrence nobody
+answered for two hours reads `missed`, computed on read.
+
+Three actions, and the wording matters: **complete**, **dismiss** ("seen, and
+not being acted on") and **snooze**. A snooze leaves the occurrence unanswered
+and is capped at three (`409 snooze_limit_reached`); `minutes` is 10, 30 or 60 —
+PRD 5's three options, reused so a reminder and a dose behave the same way.
+
+An action on an occurrence that is already answered is `409
+occurrence_not_actionable`.
+
+Limit: 200 active reminders (`409 too_many_reminders`).
+
+### Alarms
+
+```http
+GET    /api/v1/profiles/{profile_id}/alarms
+POST   /api/v1/profiles/{profile_id}/alarms
+GET    /api/v1/profiles/{profile_id}/alarms/{alarm_id}
+PATCH  /api/v1/profiles/{profile_id}/alarms/{alarm_id}
+DELETE /api/v1/profiles/{profile_id}/alarms/{alarm_id}
+```
+
+The list carries a field no other list in this file has:
+
+```json
+{
+  "alarms": [ { "label": "Morning", "time_of_day": "07:00",
+                "recurrence": "selected_days", "weekdays": [0, 1, 2, 3, 4],
+                "enabled": true,
+                "next_fire_at": "2026-03-16T07:00:00Z",
+                "sound_key": "default", "vibration": true } ],
+  "enabled_count": 1,
+  "limitation": "Alarms are scheduled as phone notifications. Nura has never been run on a physical phone, so whether one actually wakes you has not been tested."
+}
+```
+
+**`limitation` is sent with every alarm list and the client refuses a response
+without it.** Section 11 asks for the limitation to be stated where somebody
+would act on it, and this is the structural version of that: the sentence
+cannot be dropped by a client that forgets, because the field is required by
+the parser. The capability map says `alarms: available`, which is true of
+create, edit, enable and schedule — and the OS waking the phone has never been
+tested, which is what this sentence says, next to the switch.
+
+`recurrence` is `one_time`, `daily` or `selected_days` — three, because
+`weekdays` and `weekends` are `selected_days` with a weekday list, and a
+second way to say the same thing is a second thing to keep in step. Limit: 50
+alarms (`409 too_many_alarms`).
+
+### Routines, runs and steps
+
+```http
+GET    /api/v1/profiles/{profile_id}/routines
+POST   /api/v1/profiles/{profile_id}/routines
+GET    /api/v1/profiles/{profile_id}/routines/{routine_id}
+PATCH  /api/v1/profiles/{profile_id}/routines/{routine_id}
+DELETE /api/v1/profiles/{profile_id}/routines/{routine_id}
+POST   /api/v1/profiles/{profile_id}/routines/{routine_id}/pause
+POST   /api/v1/profiles/{profile_id}/routines/{routine_id}/resume
+POST   /api/v1/profiles/{profile_id}/routines/{routine_id}/archive
+GET    /api/v1/profiles/{profile_id}/routine-runs/today
+GET    /api/v1/profiles/{profile_id}/routine-runs/{run_id}
+POST   /api/v1/profiles/{profile_id}/routine-runs/{run_id}/steps/{step_id}/complete
+DELETE /api/v1/profiles/{profile_id}/routine-runs/{run_id}/steps/{step_id}/complete
+POST   /api/v1/profiles/{profile_id}/routine-runs/{run_id}/complete
+POST   /api/v1/profiles/{profile_id}/routine-runs/{run_id}/skip
+```
+
+A routine arrives with its steps, because a routine with no steps generates no
+runs:
+
+```json
+{ "title": "Morning routine", "time_of_day": "08:00",
+  "start_date": "2026-03-14", "schedule_type": "daily",
+  "timezone": "Europe/London",
+  "steps": [ { "title": "Take tablets", "optional": false },
+             { "title": "Stretch", "optional": false },
+             { "title": "Walk", "optional": true } ] }
+```
+
+`schedule_type` is `daily`, `weekly` or `selected_days`. Up to 30 steps. Limit:
+50 routines (`409 too_many_routines`).
+
+**`PATCH` with `steps` replaces the whole list**, and it does not rewrite
+history: completions already recorded against a removed step stay where they
+are, because a run is a record of what happened rather than a view of the
+current routine.
+
+A `RoutineRead` carries `today_run`, so one request renders a routine screen
+with its progress. A run carries the derived progress — `completed_steps`,
+`progress_label` ("2 of 3 complete"), `next_step_id`, `next_step_title` — and
+ticking a step returns the **whole run**, so a client gets its new progress
+line without a second request.
+
+Step completion is **idempotent on `client_completion_id`**: an offline queue
+that retries cannot invent progress. `DELETE` on the same path un-ticks —
+a checklist needs Undo as much as a task does.
+
+`POST /complete` on a run marks it done even with steps outstanding (somebody
+who says they are finished is finished); `/skip` records that today was not a
+day for it. Both answer `409 routine_run_not_actionable` on a closed run.
+
+### What Nura can actually reach
+
+```http
+GET /api/v1/profiles/{profile_id}/assistant/external-capabilities
+```
+
+On the assistant router, because it is the assistant's question: section 29's
+capability map is what the system prompt is built from, and this endpoint is
+the same map, so a screen and a model cannot disagree about what this build can
+do.
+
+```json
+{
+  "capabilities": [
+    { "key": "tasks", "state": "available", … },
+    { "key": "weather", "state": "not_configured",
+      "label": "Weather",
+      "sentence": "Live weather is not configured in this build." }
+  ],
+  "external": { "weather": "not_configured", "news": "not_configured",
+                "external_calendar": "not_configured" },
+  "any_external_configured": false
+}
+```
+
+**Every external key reads `not_configured` in every deployment, and it is
+derived.** `services.productivity.providers` is asked whether a provider is
+both *named* and *implemented*; `IMPLEMENTED` is empty for all three keys and
+`build_provider` refuses every name. A deployment that sets
+`WEATHER_PROVIDER=openweather` gets a warning in the log and still reads
+`not_configured` — section 12 as a property of the code rather than a promise
+about configuration. There is no route anywhere that returns a forecast, a
+headline or an external calendar event.
+
+### Today and the caregiver's view
+
+`GET /api/v1/today` gains a `daily_life` block (the summary above, minus the
+ids) and four `important` row types: `task`, `routine_run` and
+`general_reminder` join PRD 5's `medication_dose`, PRD 6's `symptom_episode`
+and PRD 7's `appointment`. The order is fixed on the server in one list —
+medications, appointments, symptoms, then daily life (section 18) — so no
+client re-sorts it.
+
+```http
+GET /api/v1/profiles/{profile_id}/care/routines
+```
+
+**One caregiver route, and it is the only one.** It takes an owner *or* an
+active caregiver and then requires the `routines` permission. The view is
+narrower than the owner's by construction — no step list, no provenance, no
+completion rows:
+
+```json
+{
+  "routines": [ { "routine_id": "…", "title": "Morning routine",
+                  "schedule_label": "Every day at 8:00 AM", "step_count": 3,
+                  "paused": false, "today_status": "in_progress",
+                  "today_done": 2, "today_total": 3,
+                  "today_progress_label": "2 of 3 complete" } ],
+  "scope_note": "Routines only. Tasks, alarms and personal reminders stay private."
+}
+```
+
+`routines` was the last entry in
+`CAREGIVER_PERMISSIONS_WITHOUT_A_SOURCE`, and PRD 12 emptied the tuple: every
+caregiver permission now unlocks real data. The same permission also fills a
+`routines` block on `GET /api/v1/profiles/{profile_id}/care/home`.
+
+**Section 42 is kept by absence.** A caregiver asking for `/tasks`, `/alarms`,
+`/reminders` or `/daily-life/summary` gets `404` — the same answer as a profile
+that is not theirs — because those routes depend on `OwnedProfile` and resolve
+no caregiver scope at all. There is no action type for a task, an alarm or a
+personal reminder either; the suggestion registry gains exactly three entries,
+`add_routine`, `change_routine_time` and `pause_routine`, and an approved one
+stores the routine with `source = caregiver_suggestion` so "my daughter
+suggested this" is still answerable months later.
+
+### Errors
+
+| code | status | means |
+| ---- | ------ | ----- |
+| `task_not_found` | 404 | no such task **for this profile** |
+| `reminder_not_found` | 404 | likewise |
+| `reminder_occurrence_not_found` | 404 | likewise |
+| `alarm_not_found` | 404 | likewise |
+| `routine_not_found` · `routine_run_not_found` · `routine_step_not_found` | 404 | likewise |
+| `invalid_task` · `invalid_reminder` · `invalid_alarm` · `invalid_routine` | 422 | a combination the record cannot hold |
+| `too_many_tasks` · `too_many_reminders` · `too_many_alarms` · `too_many_routines` | 409 | the per-profile limit |
+| `occurrence_not_actionable` | 409 | already completed, dismissed or cancelled |
+| `routine_run_not_actionable` | 409 | the run is closed |
+| `snooze_limit_reached` | 409 | three is the limit |
+| `invalid_snooze_duration` | 422 | not one of the three Nura offers |
+
+Every 404 is a 404 at every depth: an occurrence belonging to somebody else's
+reminder is not found, not forbidden.
+
+---
+
+## Privacy, export and deletion (PRD 13)
+
+**Every route here is owner-only.** They depend on `OwnedProfile`, which
+resolves through `account_profile_roles` — a caregiver has no row in it, so a
+caregiver reaching any of these gets `404`, the same answer as a profile that
+does not exist. That is without exception and it is not a policy that could be
+relaxed by a permission: an export is a complete copy of somebody's record and
+a delete is irreversible.
+
+```http
+GET    /api/v1/profiles/{profile_id}/privacy/summary
+POST   /api/v1/profiles/{profile_id}/privacy/conversations/delete-all
+GET    /api/v1/profiles/{profile_id}/privacy/export
+POST   /api/v1/profiles/{profile_id}/privacy/export
+GET    /api/v1/profiles/{profile_id}/privacy/export/{export_id}
+GET    /api/v1/profiles/{profile_id}/privacy/export/{export_id}/content
+DELETE /api/v1/profiles/{profile_id}/privacy/export/{export_id}
+POST   /api/v1/profiles/{profile_id}/privacy/delete-request
+POST   /api/v1/profiles/{profile_id}/privacy/delete-confirm
+```
+
+### The hub
+
+```http
+GET /api/v1/profiles/{profile_id}/privacy/summary
+```
+
+One request for the whole Privacy & Security screen, for the same reason PRD
+3's Today is one: a privacy screen that arrived in pieces would show somebody a
+half-answer about who can see their data while the rest loaded.
+
+**It owns no settings.** Every value is read from the service that already owns
+it, and every sentence comes from one wording module. Capability rows are the
+three maps that already exist — PRD 10's seven safety capabilities, PRD 11's
+twelve device capabilities, PRD 12's three external ones — and each row carries
+both the machine state and the words:
+
+```json
+{
+  "privacy_mode": false,
+  "privacy_mode_note": "Privacy Mode is off. Nura may start a conversation …",
+  "privacy_mode_limit": "Privacy Mode changes how Nura behaves in the app. It is not a hardware switch, and it does not claim to turn off a microphone or a camera.",
+  "microphone_note": "Nura does not listen. There is no voice input anywhere in the app, so it has never asked for microphone access.",
+  "memory_count": 4, "active_memory_count": 3, "conversation_count": 2,
+  "caregivers": [
+    { "relationship_id": "…", "name": "Ayesha", "role": "family",
+      "granted": ["appointments", "medications"], "accepted_at": "…" }
+  ],
+  "safety_capabilities": [
+    { "key": "push_delivery", "label": "Push notifications",
+      "state": "not_configured", "state_label": "Not set up in this build" }
+  ],
+  "robot_linked": false,
+  "robot_capabilities": [ … all twelve, whether or not a robot exists … ],
+  "external_capabilities": [ … weather, news, external_calendar … ],
+  "build_honesty_note": "Nura has not yet been tested on a physical phone or a physical robot. …"
+}
+```
+
+Both halves of each capability row are present on purpose: a client that had to
+parse the sentence in order to colour the row would make the copy
+load-bearing, and the whole point is that the copy is free to change while the
+state is not.
+
+Three answers are worth reading closely. `robot_capabilities` is **all twelve
+keys even with no robot linked**, which is PRD 11's rule — a screen that only
+lists what happens to be reported is a screen that silently stops mentioning
+one. `microphone_note` says what Nura has *never asked for* rather than what it
+turned off, because there is no voice input anywhere in the app and "microphone:
+off" would be a claim about hardware nobody queried. And
+`privacy_mode_limit` is there because Privacy Mode changes how Nura behaves and
+cannot switch off hardware, which is the one thing somebody might assume it
+does.
+
+### Deleting every conversation
+
+```http
+POST /api/v1/profiles/{profile_id}/privacy/conversations/delete-all
+```
+
+```json
+{ "deleted": 3, "note": "Deleting conversations does not touch your health record or what Nura remembers. Those are removed separately." }
+```
+
+A `POST` rather than a `DELETE` on a collection, because it is an action with a
+result somebody reads — and because a bare `DELETE /conversations` is one
+mistyped URL away from a client that meant to delete one.
+
+**It takes nothing else with it.** The messages go by the cascade PRD 8 already
+declared; memories, the health record and everything else stay. The note is in
+the response as well as on the screen, because this is the one place somebody
+might fear they deleted more than they did.
+
+### Export
+
+```http
+GET  /api/v1/profiles/{profile_id}/privacy/export
+POST /api/v1/profiles/{profile_id}/privacy/export
+```
+
+**Synchronous.** The `POST` builds the archive and returns the finished row, so
+a client never polls and `requested`/`generating` never appear in this build —
+they stay in the vocabulary for a build that needs a worker.
+
+```json
+{
+  "id": "…", "status": "ready", "status_label": "Ready to download",
+  "requested_at": "…", "generated_at": "…", "expires_at": "…",
+  "byte_size": 48210, "file_count": 11, "schema_version": 1,
+  "included_categories": ["account", "health", "assistant", "caregiver",
+                          "safety", "productivity", "device", "media"],
+  "excluded_categories": ["audit"],
+  "failure_reason": null,
+  "downloadable": true
+}
+```
+
+`downloadable` is **derived on every read** — the expiry is compared
+server-side, PRD 11's rule for a presentation applied to a file, so a client
+never has to compare timestamps and cannot disagree about a clock skew. A row
+whose expiry has passed reads `expired` even before the maintenance script has
+marked it.
+
+The list adds the three sentences a person needs *before* asking for one:
+
+```json
+{
+  "exports": [ … ],
+  "note": "A single private file holding everything recorded on this profile, plus your symptom photos and report documents.",
+  "privacy_note": "The file stays private to you and is not emailed anywhere. Nura keeps it for a day so you can download it, then deletes it.",
+  "secrets_note": "It contains no passwords, sign-in tokens, invitation links or device secrets.",
+  "sections": ["profile", "health", "medications", "symptoms", "appointments",
+               "assistant", "caregivers", "safety", "daily-life", "devices"]
+}
+```
+
+`secrets_note` is **required by the mobile parser**, the same structural choice
+PRD 12 made for the alarm limitation: a screen that offered an export without
+the sentence saying it holds no tokens would have dropped the one claim that
+makes the offer safe to accept.
+
+**One at a time.** A second request while one is ready answers `409
+data_export_already_waiting` and names the one that exists, rather than
+replacing a download somebody may be part way through.
+
+#### Downloading it
+
+```http
+GET /api/v1/profiles/{profile_id}/privacy/export/{export_id}/content
+→ 200 application/zip
+  Cache-Control: private, no-store
+  Content-Disposition: attachment; filename="nura-export-….zip"
+```
+
+An authenticated route, **not a signed URL**. There are no signed URLs anywhere
+in Nura: PRD 6 chose authenticated routes for symptom photos because a signed
+URL is a bearer token in a query string that lands in logs and share sheets and
+stays valid whoever ends up holding it, and PRD 7 followed for report PDFs. An
+export would be a bearer token for somebody's entire record. The profile is
+re-checked for every byte, and the expiry is compared here as well as in the
+service.
+
+The archive's shape, its determinism and the column-by-column rule that keeps
+secrets out are in
+[privacy-security-reliability.md](../architecture/privacy-security-reliability.md).
+
+### Deletion
+
+```http
+POST /api/v1/profiles/{profile_id}/privacy/delete-request
+POST /api/v1/profiles/{profile_id}/privacy/delete-confirm
+```
+
+**The first request changes nothing.** It counts what would go, table by table,
+from the database:
+
+```json
+{
+  "profile_name": "Ayesha",
+  "rows": { "medical_conditions": 2, "tasks": 4, "daily_checkins": 9 },
+  "row_total": 15, "file_count": 2,
+  "caregiver_count": 1, "device_count": 0, "other_profile_count": 0,
+  "warning": "This cannot be undone. Everything recorded on this profile is removed from Nura: …",
+  "keeps": "Your sign-in stays, so you can still open Nura. Any other profile on this account is untouched. …",
+  "reauth_limitation": "Nura cannot ask you for your password again: it never receives one. …",
+  "confirm_prompt": "Type the phrase below to confirm.",
+  "confirmation_phrase": "DELETE MY NURA DATA"
+}
+```
+
+So the warning a person reads is the scope the service actually has, rather
+than a paragraph written once and left behind.
+
+The second request carries both halves, neither with a default:
+
+```json
+{ "confirmation_phrase": "DELETE MY NURA DATA", "acknowledged": true }
+```
+
+The phrase is compared **exactly** — no trimming, no case folding — because
+every softening makes it easier to arrive at by accident, and accident is what
+it exists to prevent. A mismatch or a missing acknowledgement answers `422
+deletion_not_confirmed` and nothing happens.
+
+```json
+{
+  "rows_deleted": 15, "files_deleted": 2, "files_missing": 0,
+  "caregivers_revoked": 1, "devices_unlinked": 0,
+  "completed_at": "…", "other_profiles_remaining": 0
+}
+```
+
+`files_missing` is reported rather than hidden: it means something the row
+pointed at was already gone, and a privacy feature should not round that up to
+success.
+
+**What survives, and why.** The account stays, because an account with no
+profile is exactly where a new sign-up is and signing somebody out of a session
+whose token is valid for another hour is not a deletion's business. Other
+profiles on the account are untouched. A claimed robot is **unlinked, not
+unclaimed** — `owner_profile_id` and `setup_completed_at` are cleared, the
+claim stays, because the robot on the shelf still belongs to whoever bought it.
+
+**Re-authentication, stated rather than implied.** Nura verifies tokens against
+a JWKS endpoint and never receives a password, so there is nothing here to
+check one against. The limitation is in `reauth_limitation` and on the screen,
+not only in an architecture document.
+
+### Errors
+
+| code | status | means |
+| ---- | ------ | ----- |
+| `data_export_not_found` | 404 | no such export **for this profile** |
+| `data_export_already_waiting` | 409 | one is ready; download or delete it first |
+| `data_export_expired` | 410 | it existed and its expiry has passed |
+| `data_export_not_ready` | 409 | the row is `failed`, so there is nothing to download |
+| `deletion_not_confirmed` | 422 | the phrase did not match, or nothing was acknowledged |
+
+Every 404 is a 404 at every depth: an export id belonging to another profile is
+*not found*, never *forbidden*.
+
+---
+
 ## Rules for every future endpoint
 
 These are not optional, and they exist because the data is medical:
@@ -971,7 +2830,26 @@ These are not optional, and they exist because the data is medical:
 2. **Check entitlement per resource.** Confirm the authenticated user may see
    the specific record requested — not merely that they are signed in.
 3. **Caregiver access requires an explicit granted permission record.** Never
-   an implied relationship.
+   an implied relationship, and never a role. As of PRD 9 this is real:
+   `caregiver_permissions` is the record, `CareScope.require` is the check, and
+   `role` is read by nothing in the authorization path.
 4. **Validate every body with a Pydantic model.** No hand-rolled parsing.
 5. **HTTPS outside local development.**
 6. **Never log tokens, passwords, medical records or conversation content.**
+   This now includes assistant conversations, memories, custom instructions
+   and prompts, at every log level (PRD 8, section 58). PRD 13 added the
+   regression test: a capture handler on the whole `app` logger tree at
+   `DEBUG`, one write per domain, and eleven classes of content asserted
+   absent.
+7. **A route that takes a `{profile_id}` authorizes through one of the three
+   profile dependencies** — `get_owned_profile`, `get_care_scope` or
+   `get_caregiver_scope`. A route that took a profile id and required only a
+   signed-in account would let any account read any profile by guessing a
+   UUID. `tests/test_security_matrix.py` enumerates every route from the
+   application and fails on one that does not, so this is checked rather than
+   remembered.
+8. **Private files are served by authenticated routes, never signed URLs.** A
+   signed URL is a bearer token in a query string: it lands in logs, in
+   screenshots and in share sheets, and it stays valid whoever ends up holding
+   it. Every photo, report and export archive re-checks the profile for every
+   byte and answers `Cache-Control: private, no-store`.

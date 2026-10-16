@@ -28,6 +28,22 @@ Usage, from the ``backend`` directory with the virtualenv active::
     python -m scripts.seed_dev --account latest --medications empty
     python -m scripts.seed_dev --account latest --symptoms demo
     python -m scripts.seed_dev --account latest --symptoms empty
+    python -m scripts.seed_dev --account latest --appointments demo
+    python -m scripts.seed_dev --account latest --safety monitoring
+    python -m scripts.seed_dev --account latest --safety possible-fall
+    python -m scripts.seed_dev --account latest --safety no-response
+    python -m scripts.seed_dev --account latest --safety sos
+    python -m scripts.seed_dev --account latest --safety history
+    python -m scripts.seed_dev --account latest --safety empty
+    python -m scripts.seed_dev --account latest --daily-life demo
+    python -m scripts.seed_dev --account latest --daily-life busy
+    python -m scripts.seed_dev --account latest --daily-life empty
+    python -m scripts.seed_dev --account latest --robot online
+    python -m scripts.seed_dev --account latest --robot unverified
+    python -m scripts.seed_dev --account latest --robot headless
+    python -m scripts.seed_dev --account latest --robot offline
+    python -m scripts.seed_dev --account latest --robot speaker
+    python -m scripts.seed_dev --account latest --robot empty
     python -m scripts.seed_dev --account latest --device-token
 
 ``--account`` takes an email, a phone number, an auth provider subject, or
@@ -43,16 +59,32 @@ import time as clock_module
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
 from app.models import (
+    AccountProfileRole,
+    Alarm,
     Allergy,
+    Appointment,
+    AssistantMemory,
+    CaregiverAuditEvent,
+    CaregiverRelationship,
+    CaregiverSuggestion,
     Clinician,
+    Conversation,
     DailyCheckIn,
     Device,
+    DeviceCapability,
+    DevicePresentation,
+    DevicePresentationPreferences,
+    EmergencyContact,
+    FamilyThread,
+    GeneralReminder,
+    GeneralReminderOccurrence,
     HealthRecord,
     MedicalCondition,
     MedicalNote,
@@ -61,18 +93,63 @@ from app.models import (
     MedicationSchedule,
     Procedure,
     Profile,
+    Routine,
+    RoutineRun,
+    RoutineStep,
+    RoutineStepCompletion,
+    SafetyAlert,
+    SafetyAuditEvent,
+    SafetyEscalationAttempt,
+    SafetyEvent,
+    SafetyMonitoringSession,
     SymptomEntry,
     SymptomEpisode,
     SymptomPhoto,
+    Task,
     User,
+    UserSettings,
 )
 from app.services import checkins as checkin_service
 from app.services import health as health_service
 from app.services import profiles as profile_service
+from app.services.appointments import appointments as appointment_service
+from app.services.appointments import periods as period_service
+from app.services.appointments import preparation as preparation_service
+from app.services.appointments import questions as question_service
+from app.services.appointments import reports as report_service
+from app.services.appointments import snapshot as snapshot_service
+from app.services.appointments import summary as appointment_summary
+from app.services.appointments.pdf import get_pdf_service
+from app.services.assistant import conversations as conversation_service
+from app.services.assistant import memory as memory_service
+from app.services.assistant import preferences as preference_service
+from app.services.caregivers import contacts as contact_service
+from app.services.caregivers import invitations as invitation_service
+from app.services.caregivers import messaging as message_service
+from app.services.caregivers import permissions as permission_service
+from app.services.caregivers import relationships as relationship_service
+from app.services.caregivers import suggestions as suggestion_service
 from app.services.devices import ONLINE_THRESHOLD, generate_token, hash_secret
 from app.services.medications import doses as dose_service
 from app.services.medications import schedules as schedule_service
 from app.services.medications import supply as supply_service
+from app.services.productivity import alarms as alarm_service
+from app.services.productivity import capabilities as daily_life_capabilities
+from app.services.productivity import reminders as general_reminder_service
+from app.services.productivity import routines as routine_service
+from app.services.productivity import summary as daily_life_summary
+from app.services.productivity import tasks as task_service
+from app.services.productivity import wording as productivity_wording
+from app.services.robot import capabilities as robot_capabilities
+from app.services.robot import presenter as robot_presenter
+from app.services.robot import simulator as robot_simulator
+from app.services.robot import wording as robot_wording
+from app.services.safety import capabilities as safety_capabilities
+from app.services.safety import checks as safety_checks
+from app.services.safety import escalation as safety_escalation
+from app.services.safety import events as safety_events
+from app.services.safety import monitoring as safety_monitoring
+from app.services.safety import wording as safety_wording
 from app.services.storage import get_object_store
 from app.services.symptoms import episodes as episode_service
 from app.services.symptoms import photos as photo_service
@@ -81,6 +158,10 @@ from app.services.symptoms import summary as symptom_summary
 #: Deliberately not a real MAC address. A physical XIAO reports its factory
 #: MAC, so a seeded row can never collide with a board you later build.
 SEEDED_HARDWARE_ID = "NURA-DEADBEEF0001"
+
+#: The second person ``--caregivers multi`` creates, so one caregiver account
+#: can be seen supporting two profiles (PRD 9, section 56).
+SECOND_PROFILE_NAME = "Yusuf"
 
 #: How often ``--keep-online`` refreshes the heartbeat. Comfortably inside the
 #: 90-second window the backend uses to call a robot online.
@@ -808,6 +889,1293 @@ def set_symptoms(db: Session, user: User, preset: str) -> None:
     )
 
 
+def _clear_appointments(db: Session, profile: Profile) -> None:
+    """Removes appointments, their questions and their reports -- files included.
+
+    The database cascade takes the question and report rows with an appointment;
+    the PDFs are not in the database, so they have to go explicitly
+    (PRD 7, section 35).
+    """
+    store = get_object_store()
+    appointments = (
+        db.execute(select(Appointment).where(Appointment.profile_id == profile.id))
+        .scalars()
+        .all()
+    )
+    for appointment in appointments:
+        report_service.purge_objects(
+            store, report_service.list_reports(db, appointment.id)
+        )
+        db.delete(appointment)
+    db.commit()
+
+
+def _seed_clinician(db: Session, profile: Profile) -> Clinician:
+    """The clinician the fixtures link to, reused if one is already there."""
+    existing = (
+        db.execute(
+            select(Clinician).where(
+                Clinician.profile_id == profile.id, Clinician.name == "Dr Ahmed Khan"
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if existing is not None:
+        return existing
+    clinician = Clinician(
+        profile_id=profile.id,
+        name="Dr Ahmed Khan",
+        specialty="Cardiology",
+        clinic_name="City Hospital",
+    )
+    db.add(clinician)
+    db.commit()
+    db.refresh(clinician)
+    return clinician
+
+
+def _seed_appointment(
+    db: Session,
+    profile: Profile,
+    *,
+    title: str,
+    when: datetime,
+    timezone: str,
+    clinician: Clinician | None = None,
+    appointment_type: str = "specialist",
+    location_name: str | None = None,
+    notes: str | None = None,
+) -> Appointment:
+    return appointment_service.create_appointment(
+        db,
+        profile.id,
+        appointment_service.AppointmentInput(
+            title=title,
+            scheduled_at=when,
+            timezone=timezone,
+            appointment_type=appointment_type,
+            clinician_id=None if clinician is None else clinician.id,
+            location_name=location_name,
+            notes=notes,
+        ),
+    )
+
+
+def _seed_report(
+    db: Session,
+    profile: Profile,
+    appointment: Appointment,
+    *,
+    with_appendix: bool,
+    now: datetime,
+) -> None:
+    """Generates a real report version through the real pipeline.
+
+    Not a hand-written row: the snapshot, the PDF and the stored object all come
+    from the shipped code, so a fixture cannot be a report the app could not
+    have produced.
+    """
+    period = period_service.resolve(
+        db,
+        appointment,
+        preset="30_days",
+        today=now.date(),
+    )
+    data = preparation_service.build(db, profile, appointment, period)
+    selection = snapshot_service.ReportSelection(
+        symptom_episode_ids=[review.episode_id for review in data.symptoms],
+        include_appendix=with_appendix,
+    )
+    report_service.generate(
+        db,
+        get_object_store(),
+        get_pdf_service(),
+        profile,
+        appointment,
+        selection=selection,
+        period=period,
+        now=now,
+    )
+
+
+def set_appointments(db: Session, user: User, preset: str, timezone: str) -> None:
+    """Builds the appointment states PRD 7 section 69 asks a developer for.
+
+    Two states on that list cannot be seeded from here. An *appointment with no
+    health data* is not an appointment setting at all -- it is an account with
+    nothing recorded, which is what ``--health empty --medications empty
+    --symptoms empty`` produces. And an *offline question draft* lives only on
+    the phone, in the app's own queue, so the server has by definition never
+    heard of it; a developer reaches it by turning off Wi-Fi and adding a
+    question.
+    """
+    profile = profile_service.primary_profile(user)
+    if profile is None:
+        fail("this account has no profile yet, so there is nobody to see a doctor.")
+    assert profile is not None
+
+    _clear_appointments(db, profile)
+    if preset == "empty":
+        print(f"cleared {profile.preferred_name}'s appointments.")
+        return
+
+    now = datetime.now(UTC)
+    clinician = _seed_clinician(db, profile)
+
+    # 1. Tomorrow, with a clinician and questions already added. The main
+    #    Prepare for Appointment target, and the one Important Today shows.
+    tomorrow = _seed_appointment(
+        db,
+        profile,
+        title="Cardiology follow-up",
+        when=now + timedelta(days=1),
+        timezone=timezone,
+        clinician=clinician,
+        location_name="City Hospital",
+        notes="Bring the previous scan.",
+    )
+    for text in (
+        "Could this medication be contributing to my fatigue?",
+        "Should I continue physiotherapy when my knee hurts?",
+        "Do I need any follow-up tests?",
+    ):
+        question_service.create_question(db, tomorrow, text=text)
+    appointment_service.refresh_preparation_status(db, tomorrow)
+
+    # 2. Today, with nothing prepared. This is the row Important Today raises,
+    #    and the only one it ever raises (PRD 7, section 10).
+    _seed_appointment(
+        db,
+        profile,
+        title="Physiotherapy",
+        when=now + timedelta(hours=5),
+        timezone=timezone,
+        appointment_type="physiotherapy",
+        location_name="Riverside Clinic",
+    )
+
+    # 3. A past appointment, completed, carrying both kinds of report: one
+    #    summary-only and one with the detailed appendix (PRD 7, sections 26-27).
+    past = _seed_appointment(
+        db,
+        profile,
+        title="Annual review",
+        when=now - timedelta(days=21),
+        timezone=timezone,
+        clinician=clinician,
+        appointment_type="primary_care",
+    )
+    appointment_service.complete_appointment(
+        db,
+        past,
+        now - timedelta(days=21),
+        visit_notes="Doctor said continue at a lower intensity.",
+        follow_up_date=(now + timedelta(days=60)).date(),
+    )
+    _seed_report(db, profile, past, with_appendix=False, now=now - timedelta(days=21))
+    _seed_report(db, profile, past, with_appendix=True, now=now - timedelta(days=20))
+
+    # 4. A cancelled appointment, so the third history list is not empty.
+    cancelled = _seed_appointment(
+        db,
+        profile,
+        title="Dentist",
+        when=now + timedelta(days=9),
+        timezone=timezone,
+        appointment_type="dentist",
+    )
+    appointment_service.cancel_appointment(db, cancelled, now - timedelta(days=1))
+
+    # 5. A bare appointment: no clinician, no location, no questions. What most
+    #    real ones look like when somebody has just noted a date down.
+    _seed_appointment(
+        db,
+        profile,
+        title="Blood test",
+        when=now + timedelta(days=4),
+        timezone=timezone,
+        appointment_type="lab",
+    )
+
+    summary = appointment_summary.build_summary(db, profile.id, now.date(), now)
+    versions = len(report_service.list_reports(db, past.id))
+    print(
+        f"{profile.preferred_name} now has {summary.upcoming_count} upcoming "
+        f"appointments: a prepared cardiology follow-up tomorrow, an unprepared "
+        f"physiotherapy session today, a blood test, plus a completed annual "
+        f"review with {versions} report versions and a cancelled dentist visit. "
+        "An offline question draft cannot be seeded -- it only exists on a phone."
+    )
+
+
+# --- the Nura assistant (PRD 8, section 104) --------------------------------
+
+
+def _clear_assistant(db: Session, profile: Profile) -> None:
+    """Removes conversations, memories and preferences for this profile.
+
+    Not the health record, not the appointments, not the symptoms -- PRD 8
+    section 61 is exactly this rule, and a seed script that broke it would be
+    a very confusing way to find out.
+    """
+    for conversation in (
+        db.execute(select(Conversation).where(Conversation.profile_id == profile.id))
+        .scalars()
+        .all()
+    ):
+        db.delete(conversation)
+    for memory in (
+        db.execute(
+            select(AssistantMemory).where(AssistantMemory.profile_id == profile.id)
+        )
+        .scalars()
+        .all()
+    ):
+        db.delete(memory)
+    db.commit()
+
+
+def _seed_conversation(
+    db: Session,
+    profile: Profile,
+    *,
+    title: str,
+    lines: list[tuple[str, str]],
+    when: datetime,
+    safety_mode: str = "normal",
+    meta: dict[str, Any] | None = None,
+) -> Conversation:
+    """One thread, written through the real service so the rows are real."""
+    conversation = conversation_service.create_conversation(db, profile.id, title=title)
+    for index, (role, content) in enumerate(lines):
+        conversation_service.append_message(
+            db,
+            conversation,
+            role=role,
+            content=content,
+            now=when + timedelta(seconds=index * 20),
+            safety_mode=safety_mode if role == "assistant" else "normal",
+            message_type="text",
+            meta=(meta or {}) if role == "assistant" else {},
+        )
+    return conversation
+
+
+def set_assistant(db: Session, user: User, preset: str) -> None:
+    """Builds the assistant states PRD 8 section 104 asks a developer for.
+
+    ``empty`` is the profile with no memories and nothing said. ``demo`` is
+    the rest of the list: several memories, custom instructions, a thread
+    with a tool call in it, a serious-mode thread, and a profile in Privacy
+    mode -- reached with ``--assistant privacy``.
+
+    Two states on that list are not seeded from here. A *provider timeout*
+    and a *provider error* are properties of the model connection, not of
+    the database: set ``AI_PROVIDER=`` to see the unconfigured path, or
+    point ``AI_API_KEY`` at a wrong value to see a real failure translated.
+    Nothing here fakes either, because a fixture that pretends the provider
+    failed would be testing the fixture.
+    """
+    profile = profile_service.primary_profile(user)
+    if profile is None:
+        fail("this account has no profile yet, so there is nobody to talk to.")
+    assert profile is not None
+
+    _clear_assistant(db, profile)
+    preferences = preference_service.get_or_create(db, profile.id)
+
+    if preset == "empty":
+        preference_service.update(
+            db,
+            preferences,
+            {
+                "personality_preset": preference_service.DEFAULT_PRESET,
+                "custom_instructions": "",
+                "mode": "normal",
+                "proactivity": "low",
+            },
+        )
+        print(f"cleared {profile.preferred_name}'s conversations and memories.")
+        return
+
+    now = datetime.now(UTC)
+
+    preference_service.update(
+        db,
+        preferences,
+        {
+            "personality_preset": "friendly",
+            "verbosity": "balanced",
+            "proactivity": "high",
+            "custom_instructions": (
+                "Keep morning conversations short. Explain medical words simply."
+            ),
+            "mode": "privacy" if preset == "privacy" else "normal",
+        },
+    )
+
+    for category, content in (
+        ("communication", "Prefers to be called Baba."),
+        ("communication", "Wants medical words explained simply."),
+        ("routine", "Morning responses should be concise."),
+        ("preferences", "Prefers short answers."),
+    ):
+        memory_service.create_memory(
+            db,
+            profile.id,
+            category=category,
+            content=content,
+            source="conversation" if category == "routine" else "user",
+            now=now,
+        )
+
+    # 1. An ordinary thread. What the history list mostly looks like.
+    _seed_conversation(
+        db,
+        profile,
+        title="What does inflammation mean?",
+        when=now - timedelta(days=3),
+        lines=[
+            ("user", "What does inflammation mean?"),
+            (
+                "assistant",
+                "Inflammation is the body's response to injury or infection. "
+                "It is what causes redness, warmth and swelling around an "
+                "affected area, and it is part of healing rather than a "
+                "condition in itself.",
+            ),
+        ],
+        meta={
+            "model": "seeded",
+            "tools": [],
+            "safety_mode": "normal",
+            "prompt_version": 1,
+            "latency_ms": 1200,
+        },
+    )
+
+    # 2. A thread with a tool call in it -- the row that proves the tool
+    #    metadata renders, without a model having been called.
+    _seed_conversation(
+        db,
+        profile,
+        title="What's on today?",
+        when=now - timedelta(days=1),
+        lines=[
+            ("user", "What's on today?"),
+            (
+                "assistant",
+                "You have two doses still to record today and your cardiology "
+                "follow-up is tomorrow at 3:30 PM. Today's check-in has not "
+                "been done yet.",
+            ),
+        ],
+        meta={
+            "model": "seeded",
+            "tools": ["get_today_summary"],
+            "safety_mode": "normal",
+            "prompt_version": 1,
+            "latency_ms": 2100,
+        },
+    )
+
+    # 3. A serious-mode thread, so the banner and the tone have something to
+    #    render against (PRD 8, sections 37 and 69).
+    _seed_conversation(
+        db,
+        profile,
+        title="Should I stop taking my tablets?",
+        when=now - timedelta(hours=4),
+        safety_mode="serious",
+        lines=[
+            ("user", "Should I stop taking my tablets? They make me tired."),
+            (
+                "assistant",
+                "I can show the schedule you've recorded, but changes to dose "
+                "or whether to stop a medication should come from your "
+                "clinician or pharmacist.\n\nYou have two medications with an "
+                "active schedule. Tiredness is worth raising at your "
+                "appointment tomorrow -- shall I add it to your questions?"
+                "\n\nFor advice about changing or missing a dose, follow your "
+                "clinician or pharmacist's instructions.",
+            ),
+        ],
+        meta={
+            "model": "seeded",
+            "tools": ["get_active_medications"],
+            "safety_mode": "serious",
+            "prompt_version": 1,
+            "latency_ms": 1800,
+        },
+    )
+
+    mode = "privacy mode, " if preset == "privacy" else ""
+    print(
+        f"seeded {profile.preferred_name}'s assistant: {mode}"
+        "4 memories, custom instructions, 3 conversations."
+    )
+
+
+# --- caregivers, family messages and emergency contacts (PRD 9) -------------
+
+
+def _clear_caregivers(db: Session, profile: Profile) -> None:
+    """Removes every PRD 9 row for this profile and nothing else.
+
+    The health record, the medications, the symptoms, the appointments and the
+    conversations are deliberately untouched: a developer reaching for caregiver
+    fixtures has not asked to lose somebody's medication schedule, and there is
+    no foreign key from a caregiver table into any of it that could take one with
+    it.
+    """
+    relationships = (
+        db.execute(
+            select(CaregiverRelationship).where(
+                CaregiverRelationship.profile_id == profile.id
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for relationship in relationships:
+        thread = db.execute(
+            select(FamilyThread).where(FamilyThread.relationship_id == relationship.id)
+        ).scalar_one_or_none()
+        if thread is not None:
+            db.delete(thread)
+    for suggestion in (
+        db.execute(
+            select(CaregiverSuggestion).where(
+                CaregiverSuggestion.profile_id == profile.id
+            )
+        )
+        .scalars()
+        .all()
+    ):
+        db.delete(suggestion)
+    for relationship in relationships:
+        db.delete(relationship)
+    for contact in (
+        db.execute(
+            select(EmergencyContact).where(EmergencyContact.profile_id == profile.id)
+        )
+        .scalars()
+        .all()
+    ):
+        db.delete(contact)
+    for event in (
+        db.execute(
+            select(CaregiverAuditEvent).where(
+                CaregiverAuditEvent.profile_id == profile.id
+            )
+        )
+        .scalars()
+        .all()
+    ):
+        db.delete(event)
+    db.commit()
+
+
+def _caregiver_account(db: Session, label: str) -> User:
+    """A second account to play the caregiver, created on demand.
+
+    Development only, and it is a real account row -- the same thing a second
+    sign-in would produce -- because a caregiver fixture whose account does not
+    exist cannot be signed in as, which is the whole point of having one.
+
+    No profile is created for it. Section 14: supporting somebody must not
+    require having a health profile of your own, and the fixtures are the place
+    to prove that holds.
+    """
+    subject = f"dev-caregiver-{label}"
+    existing = db.execute(
+        select(User).where(User.auth_provider_id == subject)
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    account = User(
+        auth_provider_id=subject,
+        email=f"{label}@caregiver.invalid",
+        onboarding_status="authenticated",
+    )
+    account.settings = UserSettings()
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+def _seed_relationship(
+    db: Session,
+    profile: Profile,
+    inviter: User,
+    *,
+    label: str,
+    name: str,
+    role: str,
+    permissions: dict[str, bool],
+    status: str,
+    now: datetime,
+) -> CaregiverRelationship:
+    """One relationship in whichever state the fixture wants.
+
+    Built through the invitation service for ``pending`` and ``active`` so the
+    token contract, the permission rows and the audit trail are the real ones --
+    a fixture that inserted rows directly would be a fixture that disagrees with
+    production about what a caregiver is.
+    """
+    minted = invitation_service.invite(
+        db,
+        profile,
+        inviter,
+        invited_name=name,
+        role=role,
+        permission_keys=permissions,
+        email=f"{label}@caregiver.invalid",
+        now=now,
+    )
+    relationship = minted.relationship
+    if status == "pending":
+        print(
+            f"  invitation for {name} (expires {relationship.invite_expires_at:%d %b}):"
+        )
+        print(f"    {minted.token}")
+        return relationship
+
+    account = _caregiver_account(db, label)
+    relationship = invitation_service.accept(db, minted.token, account, now=now)
+    if status == "revoked":
+        relationship_service.revoke(db, relationship, inviter, now=now)
+    return relationship
+
+
+def set_caregivers(db: Session, user: User, preset: str, timezone: str) -> None:
+    """Builds the caregiver states PRD 9 section 98 asks a developer for.
+
+    ``empty`` is the profile with nobody helping. ``demo`` is the rest of the
+    list: a pending invitation, an active caregiver with limited permissions, a
+    primary caregiver with broad permissions, a revoked caregiver, a pending
+    medication suggestion, an approved one, a family thread with messages and
+    three emergency contacts. ``multi`` additionally makes one caregiver account
+    support a second profile, which is section 56's case.
+
+    One item on section 98's list is not seeded from here: *a caregiver
+    supporting two profiles* needs a second profile to support, so ``multi``
+    creates one rather than pretending. And nothing here fabricates a safety
+    alert: section 94 says the permission key may exist before its event source
+    does, and a fixture that invented one would be the fabrication section 94
+    rules out.
+
+    The invitation tokens are printed. That is safe only because this script
+    refuses to run outside development -- the stored value is still a hash, and
+    an invitation is single-use and expires.
+    """
+    profile = profile_service.primary_profile(user)
+    if profile is None:
+        fail("this account has no profile yet, so there is nobody to care for.")
+    assert profile is not None
+
+    zone = ZoneInfo(timezone)
+    now = datetime.now(tz=UTC)
+    _clear_caregivers(db, profile)
+
+    if preset == "empty":
+        print(f"cleared {profile.preferred_name}'s caregivers, messages and contacts.")
+        return
+
+    # A caregiver with a little, a caregiver with a lot, one who never answered,
+    # and one who was removed.
+    limited = _seed_relationship(
+        db,
+        profile,
+        user,
+        label="ayesha",
+        name="Ayesha",
+        role="family",
+        permissions={"medications": True, "appointments": True, "communication": True},
+        status="active",
+        now=now,
+    )
+    _seed_relationship(
+        db,
+        profile,
+        user,
+        label="bilal",
+        name="Bilal",
+        role="primary_caregiver",
+        permissions={
+            "medications": True,
+            "appointments": True,
+            "symptoms": True,
+            "reports": True,
+            "communication": True,
+            "general_health_summary": True,
+        },
+        status="active",
+        now=now,
+    )
+    _seed_relationship(
+        db,
+        profile,
+        user,
+        label="carmen",
+        name="Carmen",
+        role="caregiver",
+        permissions={"appointments": True},
+        status="pending",
+        now=now,
+    )
+    _seed_relationship(
+        db,
+        profile,
+        user,
+        label="dara",
+        name="Dara",
+        role="family",
+        permissions={"medications": True},
+        status="revoked",
+        now=now,
+    )
+
+    # A pending suggestion and an approved one, against a real schedule if there
+    # is one. No schedule means no medication suggestion, rather than a
+    # suggestion pointing at nothing.
+    schedule = db.execute(
+        select(MedicationSchedule)
+        .where(MedicationSchedule.profile_id == profile.id)
+        .order_by(MedicationSchedule.created_at.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+    suggestion_note = "no medication schedule, so no medication suggestion"
+    if schedule is not None:
+        scope = permission_service.resolve_scope(
+            db, _caregiver_account(db, "ayesha"), profile.id
+        )
+        pending = suggestion_service.create(
+            db,
+            scope,
+            action_type="change_medication_reminder_time",
+            payload={"times": [{"time_of_day": "20:00"}]},
+            target_resource_id=schedule.id,
+            now=now,
+        )
+        approved = suggestion_service.create(
+            db,
+            scope,
+            action_type="resume_medication_reminder",
+            target_resource_id=schedule.id,
+            now=now,
+        )
+        suggestion_service.approve(db, profile, approved, user, now=now)
+        suggestion_note = f"1 pending suggestion ({pending.action_type}), 1 approved"
+
+    # A thread with something in it from both sides, and a check-in.
+    owner_scope = permission_service.resolve_scope(db, user, profile.id)
+    caregiver_scope = permission_service.resolve_scope(
+        db, _caregiver_account(db, "ayesha"), profile.id
+    )
+    thread = message_service.get_or_create_thread(db, limited, now=now)
+    message_service.send_message(
+        db,
+        caregiver_scope,
+        thread,
+        sender_account_id=_caregiver_account(db, "ayesha").id,
+        message_type="check_in",
+        check_in_code="how_are_you",
+        now=now - timedelta(hours=3),
+    )
+    message_service.send_message(
+        db,
+        owner_scope,
+        thread,
+        sender_account_id=user.id,
+        message_type="check_in",
+        check_in_code="im_okay",
+        now=now - timedelta(hours=2, minutes=55),
+    )
+    message_service.send_message(
+        db,
+        caregiver_scope,
+        thread,
+        sender_account_id=_caregiver_account(db, "ayesha").id,
+        message_type="text",
+        text="Good. I'll bring the prescription over on Saturday.",
+        now=now - timedelta(minutes=40),
+    )
+
+    # The chain PRD 10 will escalate through. Nothing in PRD 9 walks it.
+    for index, (name, relationship_label, phone) in enumerate(
+        (
+            ("Bilal", "Son", "+447700900111"),
+            ("Ayesha", "Daughter", "+447700900222"),
+            ("Hana", "Neighbour", "+447700900333"),
+        ),
+        start=1,
+    ):
+        contact_service.create_contact(
+            db,
+            profile,
+            contact_service.ContactInput(
+                name=name, phone=phone, relationship_label=relationship_label
+            ),
+            user,
+            now=now,
+        )
+        assert index <= contact_service.MAX_CONTACTS
+
+    if preset == "multi":
+        # Section 56: one caregiver account, two people, independent permissions.
+        # Reused rather than recreated, so running this twice gives one second
+        # person instead of a pile of them -- the fixtures are re-run constantly
+        # and nothing here should accumulate.
+        second = next(
+            (
+                link.profile
+                for link in user.profile_roles
+                if link.profile.preferred_name == SECOND_PROFILE_NAME
+            ),
+            None,
+        )
+        if second is None:
+            second = Profile(preferred_name=SECOND_PROFILE_NAME)
+            db.add(second)
+            db.flush()
+            db.add(
+                AccountProfileRole(
+                    account_id=user.id, profile_id=second.id, role="setup_helper"
+                )
+            )
+            db.commit()
+            db.refresh(user)
+        else:
+            _clear_caregivers(db, second)
+        _seed_relationship(
+            db,
+            profile=second,
+            inviter=user,
+            label="ayesha",
+            name="Ayesha",
+            role="family",
+            permissions={"symptoms": True},
+            status="active",
+            now=now,
+        )
+        print(f"  Ayesha also supports {second.preferred_name} (symptoms only)")
+
+    local = now.astimezone(zone)
+    print(
+        f"seeded {profile.preferred_name}'s care network as of {local:%d %b %H:%M %Z}: "
+        "2 active caregivers, 1 pending invitation, 1 revoked, "
+        f"{suggestion_note}, a thread with 3 messages, 3 emergency contacts."
+    )
+    print(
+        "  sign in as a caregiver with the accounts above "
+        "(auth subject 'dev-caregiver-<name>')."
+    )
+
+
+# --- safety monitoring and SOS (PRD 10, sections 18, 53 and 114) -------------
+#
+# This is PRD 10's developer trigger harness, and section 18 is specific about
+# where it may live: tests, seed scripts or developer diagnostics -- and **not**
+# a production-visible fake emergency control. There is no such control in the
+# app and there never will be: what a detector has is a device token and an
+# authenticated route, so what a developer needs in order to exercise the
+# detector path is a device token and a curl command.
+#
+# Nothing here fabricates a safety *alert* for a caregiver out of nothing: the
+# presets raise real events through ``services.safety.events``, and the
+# caregiver alerts that follow are the ones escalation really created. A
+# fixture that wrote an alert row directly would be the fabrication section 94
+# warned against, one PRD later.
+
+
+def _clear_safety(db: Session, profile: Profile) -> None:
+    """Removes every PRD 10 row for this profile and nothing else.
+
+    The caregiver relationships, the emergency contacts and the health record
+    are deliberately untouched -- a developer reaching for safety fixtures has
+    not asked to lose somebody's care network, and the contacts are what makes
+    an escalation worth looking at.
+    """
+    for model in (
+        SafetyAuditEvent,
+        SafetyEscalationAttempt,
+        SafetyAlert,
+        SafetyEvent,
+        SafetyMonitoringSession,
+    ):
+        for row in (
+            db.execute(select(model).where(model.profile_id == profile.id))
+            .scalars()
+            .all()
+        ):
+            db.delete(row)
+    db.commit()
+
+
+def _describe_event(db: Session, event: SafetyEvent) -> None:
+    """Prints what really happened, in the words the app would show.
+
+    Straight from ``services.safety.wording``, so a developer reading the
+    terminal sees the same sentences a user would -- including the ones saying
+    a channel is not set up.
+    """
+    print(f"  {safety_wording.EVENT_TYPE_LABELS[event.event_type]} -- {event.status}")
+    for attempt in safety_escalation.attempts_for(db, event.id):
+        print(
+            "    "
+            + safety_wording.escalation_line(
+                label=attempt.recipient_label,
+                channel=attempt.channel,
+                status=attempt.status,
+            )
+        )
+    if event.escalation_outcome:
+        print(f"    outcome: {safety_wording.OUTCOME_LABELS[event.escalation_outcome]}")
+
+
+def set_safety(db: Session, user: User, preset: str, timezone: str) -> None:
+    """Builds the safety states PRD 10 section 114 asks a developer for.
+
+    ``empty``          nothing: no session, no events, no alerts.
+    ``monitoring``     monitoring on for an hour, nothing else.
+    ``possible-fall``  monitoring on and a check-in waiting, with its real
+                       deadline -- the state section 23's prompt is for.
+    ``no-response``    the same, with the deadline already past and escalation
+                       run, which is what the maintenance worker would produce.
+    ``sos``            an emergency request raised with monitoring off
+                       (section 21), escalated, still live.
+    ``history``        three finished events: a possible-distress check-in
+                       answered "I'm okay" with no escalation at all, a
+                       possible fall marked a false alarm, and an emergency
+                       request that really escalated.
+
+    Every preset goes through the same service the API does, so what a
+    developer sees is what a user would -- including the lines saying phone
+    calling and text messages are not set up in this build.
+    """
+    profile = profile_service.primary_profile(user)
+    if profile is None:
+        fail("this account has no profile yet, so there is nobody to watch over.")
+    assert profile is not None
+
+    zone = ZoneInfo(timezone)
+    now = datetime.now(tz=UTC)
+    _clear_safety(db, profile)
+
+    if preset == "empty":
+        print(f"cleared {profile.preferred_name}'s safety sessions, events and alerts.")
+        return
+
+    contacts = contact_service.list_contacts(db, profile.id, active_only=True)
+    if not contacts:
+        print(
+            "  note: no emergency contacts. Escalation will report "
+            "'no contacts' -- seed some with --caregivers demo."
+        )
+
+    if preset in ("monitoring", "possible-fall", "no-response"):
+        session = safety_monitoring.start(
+            db,
+            profile,
+            user,
+            duration_mode="1_hour",
+            timezone_name=timezone,
+            now=now,
+            second_prompt_enabled=preset == "no-response",
+        )
+        local_end = session.ends_at.astimezone(zone) if session.ends_at else None
+        print(
+            f"  Safety Monitoring on until {local_end:%H:%M %Z}"
+            if local_end
+            else "  Safety Monitoring on until turned off"
+        )
+
+    if preset == "possible-fall":
+        event = safety_events.create(
+            db,
+            profile,
+            event_type="possible_fall",
+            trigger_source="developer_simulation",
+            now=now,
+            actor_account_id=None,
+            actor_kind="system",
+            idempotency_key=f"seed-{secrets.token_hex(6)}",
+        )
+        db.commit()
+        deadline = event.response_deadline_at
+        assert deadline is not None
+        print(
+            f"  a check-in is waiting until {deadline.astimezone(zone):%H:%M:%S %Z} "
+            "-- answer it in the app, or let it run out"
+        )
+
+    if preset == "no-response":
+        started = now - timedelta(minutes=5)
+        event = safety_events.create(
+            db,
+            profile,
+            event_type="possible_distress",
+            trigger_source="developer_simulation",
+            now=started,
+            actor_account_id=None,
+            actor_kind="system",
+            idempotency_key=f"seed-{secrets.token_hex(6)}",
+        )
+        db.commit()
+        # The same two steps the maintenance worker takes, with the clock
+        # moved rather than waited out (section 82).
+        safety_checks.advance(db, event, started + timedelta(seconds=46))
+        db.commit()
+        safety_checks.advance(db, event, started + timedelta(seconds=70))
+        db.commit()
+        db.refresh(event)
+        _describe_event(db, event)
+
+    if preset == "sos":
+        event = safety_events.create(
+            db,
+            profile,
+            event_type="manual_sos",
+            trigger_source="mobile_manual",
+            now=now,
+            actor_account_id=user.id,
+            actor_kind="primary_user",
+        )
+        db.commit()
+        db.refresh(event)
+        print("  an emergency request is live (monitoring was off -- section 21)")
+        _describe_event(db, event)
+
+    if preset == "history":
+        # An open-ended session, so the two passive events are accepted at the
+        # times they claim to have happened (section 22 is about monitoring
+        # being on, not about the clock). It is stopped again at the end --
+        # the fixture is a history, not a state.
+        session = safety_monitoring.start(
+            db,
+            profile,
+            user,
+            duration_mode="until_turned_off",
+            timezone_name=timezone,
+            now=now - timedelta(days=4),
+        )
+        plan: list[tuple[str, str | None, str | None, int]] = [
+            # A check-in answered in time: no escalation at all, which is the
+            # whole of section 25 and the most important row in this list.
+            ("possible_distress", "im_okay", None, 3),
+            ("possible_fall", "false_alarm", "user_testing", 2),
+            # And one that really escalated, so the lines saying a channel is
+            # not set up are visible in the history too.
+            ("manual_sos", None, None, 1),
+        ]
+        for event_type, answer, reason, days_ago in plan:
+            when = now - timedelta(days=days_ago)
+            event = safety_events.create(
+                db,
+                profile,
+                event_type=event_type,
+                trigger_source=(
+                    "mobile_manual"
+                    if event_type == "manual_sos"
+                    else "developer_simulation"
+                ),
+                now=when,
+                actor_account_id=user.id if event_type == "manual_sos" else None,
+                actor_kind="primary_user" if event_type == "manual_sos" else "system",
+                idempotency_key=f"seed-{secrets.token_hex(6)}",
+            )
+            db.commit()
+            if answer is not None:
+                safety_checks.respond(
+                    db,
+                    event,
+                    response=answer,
+                    actor=user,
+                    now=when + timedelta(seconds=20),
+                )
+                if reason is not None:
+                    safety_checks.mark_false_alarm(
+                        db,
+                        event,
+                        user,
+                        false_positive=True,
+                        reason=reason,
+                        now=when + timedelta(seconds=30),
+                    )
+            db.refresh(event)
+            _describe_event(db, event)
+        safety_monitoring.stop(db, session, user, now=now)
+
+    capability = safety_capabilities.capability_map()
+    unavailable = [key for key, state in capability.items() if state != "available"]
+    print(
+        f"seeded {profile.preferred_name}'s safety state ({preset}). "
+        f"Not available in this build: {', '.join(unavailable)}."
+    )
+    print(
+        "  simulate a robot detector with a device token:\n"
+        "    python -m scripts.seed_dev --account latest --device-token\n"
+        "    curl -X POST -H 'Authorization: Bearer <token>' "
+        "-H 'Content-Type: application/json' \\\n"
+        '      -d \'{"event_type": "possible_fall", '
+        '"trigger_source": "developer_simulation", '
+        '"idempotency_key": "sim-1"}\' \\\n'
+        "      http://localhost:8000/api/v1/device-actions/safety-events"
+    )
+
+
+def _clear_daily_life(db: Session, profile: Profile) -> None:
+    """Removes every PRD 12 row for this profile and nothing else.
+
+    Children first, because a step completion points at a run and a run points
+    at a routine. Nothing medical is touched: a task list is not a health
+    record, which is the whole reason PRD 12 keeps its own tables.
+    """
+    for model in (
+        RoutineStepCompletion,
+        RoutineRun,
+        RoutineStep,
+        Routine,
+        GeneralReminderOccurrence,
+        GeneralReminder,
+        Alarm,
+        Task,
+    ):
+        for row in (
+            db.execute(select(model).where(model.profile_id == profile.id))
+            .scalars()
+            .all()
+        ):
+            db.delete(row)
+    db.commit()
+
+
+def set_daily_life(db: Session, user: User, preset: str, timezone: str) -> None:
+    """Builds the daily-life states PRD 12 section 70 asks a developer for.
+
+    ``demo``  one of each: an overdue task, a task due today, a task with no
+              due date at all (section 5's normal case), a daily reminder, a
+              weekday alarm and a three-step morning routine with two steps
+              already ticked. Enough to see every Today row type and the
+              robot's four new cards.
+    ``busy``  the same plus a second routine, a monthly reminder and a
+              one-off alarm, for a Today screen with something in every group.
+    ``empty`` clears every task, reminder, alarm and routine.
+
+    No notification is scheduled by any of this and none could be: scheduling
+    happens on the phone, and nothing in this project has ever run on one.
+    """
+    profile = profile_service.primary_profile(user)
+    if profile is None:
+        fail("this account has no profile yet, so there is no list to put a task on.")
+    assert profile is not None
+
+    _clear_daily_life(db, profile)
+    if preset == "empty":
+        print("  daily life: cleared every task, reminder, alarm and routine")
+        return
+
+    now = datetime.now(UTC)
+    zone = ZoneInfo(timezone)
+    local = now.astimezone(zone)
+    today = local.date()
+
+    # --- tasks (sections 5 and 6) -------------------------------------------
+    task_service.create_task(
+        db,
+        profile.id,
+        task_service.TaskInput(
+            title="Call the physiotherapist",
+            notes="Ask about the Thursday slot.",
+            priority="important",
+            due_at=(local - timedelta(hours=5)).astimezone(UTC),
+            timezone=timezone,
+        ),
+        now,
+    )
+    task_service.create_task(
+        db,
+        profile.id,
+        task_service.TaskInput(
+            title="Collect the prescription",
+            priority="normal",
+            due_at=datetime.combine(today, time(17, 0), tzinfo=zone).astimezone(UTC),
+            timezone=timezone,
+        ),
+        now,
+    )
+    # Section 5: a task with no time is a normal task, not an incomplete one.
+    task_service.create_task(
+        db,
+        profile.id,
+        task_service.TaskInput(title="Look into the walking group", timezone=timezone),
+        now,
+    )
+    done = task_service.create_task(
+        db,
+        profile.id,
+        task_service.TaskInput(title="Water the plants", timezone=timezone),
+        now,
+    )
+    task_service.complete_task(db, done, now)
+
+    # --- reminders (sections 7 and 8) ---------------------------------------
+    general_reminder_service.create_reminder(
+        db,
+        profile.id,
+        general_reminder_service.ReminderInput(
+            title="Stand up and stretch",
+            body="Just for a minute.",
+            time_of_day=time(11, 0),
+            start_date=today - timedelta(days=3),
+            recurrence="daily",
+            timezone=timezone,
+        ),
+        now,
+    )
+    general_reminder_service.create_reminder(
+        db,
+        profile.id,
+        general_reminder_service.ReminderInput(
+            title="Ring Mum",
+            time_of_day=time(19, 30),
+            start_date=today,
+            recurrence="weekly",
+            weekdays=[6],
+            timezone=timezone,
+        ),
+        now,
+    )
+
+    # --- alarms (sections 10 and 11) ----------------------------------------
+    alarm_service.create_alarm(
+        db,
+        profile.id,
+        alarm_service.AlarmInput(
+            label="Morning",
+            time_of_day=time(7, 0),
+            recurrence="selected_days",
+            weekdays=[0, 1, 2, 3, 4],
+            timezone=timezone,
+        ),
+        now,
+    )
+
+    # --- routines (sections 12 to 14) ---------------------------------------
+    morning = routine_service.create_routine(
+        db,
+        profile.id,
+        routine_service.RoutineInput(
+            title="Morning routine",
+            description="The three things that make the rest of the day easier.",
+            time_of_day=time(8, 0),
+            start_date=today - timedelta(days=7),
+            schedule_type="daily",
+            timezone=timezone,
+        ),
+        [
+            routine_service.StepInput(title="Take tablets"),
+            routine_service.StepInput(title="Stretch"),
+            routine_service.StepInput(title="Short walk", optional=True),
+        ],
+        now,
+    )
+    runs = routine_service.runs_for_today(db, profile.id, now)
+    today_run = next((run for run in runs if run.routine_id == morning.id), None)
+    if today_run is not None:
+        for step in morning.steps[:2]:
+            routine_service.complete_step(db, today_run, step, now)
+
+    if preset == "busy":
+        general_reminder_service.create_reminder(
+            db,
+            profile.id,
+            general_reminder_service.ReminderInput(
+                title="Pay the electricity bill",
+                time_of_day=time(9, 0),
+                start_date=today,
+                recurrence="monthly",
+                day_of_month=min(today.day, 28),
+                timezone=timezone,
+            ),
+            now,
+        )
+        alarm_service.create_alarm(
+            db,
+            profile.id,
+            alarm_service.AlarmInput(
+                label="Leave for the appointment",
+                time_of_day=time(13, 45),
+                recurrence="one_time",
+                on_date=today + timedelta(days=2),
+                timezone=timezone,
+            ),
+            now,
+        )
+        routine_service.create_routine(
+            db,
+            profile.id,
+            routine_service.RoutineInput(
+                title="Wind down",
+                time_of_day=time(21, 30),
+                start_date=today - timedelta(days=2),
+                schedule_type="daily",
+                timezone=timezone,
+            ),
+            [
+                routine_service.StepInput(title="Put the phone down"),
+                routine_service.StepInput(title="Lay out tomorrow's tablets"),
+            ],
+            now,
+        )
+
+    db.commit()
+
+    summary = daily_life_summary.build_summary(
+        db, profile.id, task_service.today_date(timezone, now), now
+    )
+    print(f"  daily life: {preset} ({timezone})")
+    print(
+        "    "
+        + productivity_wording.today_summary_sentence(
+            summary.tasks.due_today,
+            summary.routines.due_today,
+            summary.reminders.due_today,
+        )
+    )
+    print(
+        f"    tasks: {summary.tasks.due_today} due today, "
+        f"{summary.tasks.overdue} overdue, {summary.tasks.open_total} open"
+    )
+    print(
+        f"    reminders: {summary.reminders.due_today} today, "
+        f"{summary.reminders.due_now} due now"
+    )
+    print(
+        f"    routines: {summary.routines.due_today} today, "
+        f"{summary.routines.in_progress} in progress, "
+        f"{summary.routines.completed_today} complete"
+    )
+    if summary.next_alarm_at is not None:
+        local_alarm = summary.next_alarm_at.astimezone(zone)
+        print(
+            f"    next alarm: {local_alarm:%a %d %b} at "
+            f"{productivity_wording.format_clock(local_alarm.time())}"
+        )
+    # Section 11, said here too: a developer reading this terminal should not
+    # have to find the completion report to learn what an alarm in this build
+    # is.
+    print(f"    {productivity_wording.ALARM_LIMITATION}")
+    # Section 12: the three external capabilities read ``not_configured`` in
+    # every deployment, and a developer looking for weather or news should
+    # find that out here rather than from a model's answer.
+    for key, state in daily_life_capabilities.external_states().items():
+        print("    " + productivity_wording.capability_sentence(key=key, state=state))
+
+
 def rotate_device_token(db: Session, user: User) -> None:
     """Issues a fresh device token and prints it (PRD 5, section 47).
 
@@ -835,11 +2203,119 @@ def rotate_device_token(db: Session, user: User) -> None:
     print(f"device token for {device.display_name} (development only):\n  {token}")
 
 
+def _clear_robot(db: Session, device: Device) -> None:
+    """Removes every PRD 11 row for this robot and nothing else.
+
+    The device itself, its claim and its token are untouched: a developer
+    reaching for presentation fixtures has not asked to unpair their robot.
+    """
+    for model in (DevicePresentation, DevicePresentationPreferences, DeviceCapability):
+        for row in (
+            db.execute(select(model).where(model.device_id == device.id)).scalars().all()
+        ):
+            db.delete(row)
+    db.commit()
+
+
+def _describe_screen(screen: robot_simulator.Screen | None) -> None:
+    """Prints what a person standing in front of the robot would see."""
+    if screen is None:
+        print("    (nothing to show)")
+        return
+    print(f"    [{screen.layout}] mode={screen.mode}")
+    for text in screen.lines:
+        print(f"      | {text}")
+
+
+def set_robot(db: Session, user: User, preset: str) -> None:
+    """Builds the robot states PRD 11 section 132 asks a developer for.
+
+    ``offline``    a claimed robot that has reported a screen and has not been
+                   heard from for hours. Section 20's case: cards stay queued,
+                   nothing is displayed, and the app says so.
+    ``online``     the same robot, heartbeating now, with a screen reported
+                   available. Section 132's first two steps.
+    ``unverified`` a robot whose firmware has the display driver and has
+                   proven nothing -- section 12's case, and what a real first
+                   build would honestly report.
+    ``headless``   a robot with no screen at all. Section 123's
+                   ``not_supported``.
+    ``speaker``    a robot reporting a working speaker, which nothing in this
+                   project has ever produced. There to exercise the audio
+                   settings and the read-aloud preferences (section 64).
+    ``empty``      clears every presentation, preference and capability row.
+
+    Every preset reconciles afterwards and prints what the robot would be
+    handed, so the terminal shows the experience rather than a row count.
+    """
+    device = (
+        db.execute(
+            select(Device)
+            .where(Device.claimed_by_account_id == user.id)
+            .order_by(Device.created_at)
+        )
+        .scalars()
+        .first()
+    )
+    if device is None:
+        print("  no robot on this account -- run --device online first")
+        return
+
+    _clear_robot(db, device)
+    if preset == "empty":
+        print("  robot: cleared every presentation, preference and capability")
+        return
+
+    now = datetime.now(UTC)
+    states = {
+        "offline": robot_simulator.DISPLAY_ONLY,
+        "online": robot_simulator.DISPLAY_ONLY,
+        "unverified": robot_simulator.UNVERIFIED_DISPLAY,
+        "headless": robot_simulator.HEADLESS,
+        "speaker": robot_simulator.WITH_SPEAKER,
+    }[preset]
+
+    robot_capabilities.report(db, device, dict(states), now)
+    device.last_seen_at = now - timedelta(hours=3) if preset == "offline" else now
+    if device.setup_completed_at is None:
+        device.setup_completed_at = now - timedelta(days=1)
+    db.commit()
+
+    result = robot_presenter.refresh(db, device, now)
+    db.commit()
+
+    print(f"  robot: {preset} ({device.hardware_id})")
+    print(f"    mode {result.mode.mode}, {result.queue_depth} presentation(s) open")
+    for view in robot_capabilities.views(db, device, now):
+        if view.key in ("display", "display_text", "speaker", "buttons"):
+            print(
+                "    " + robot_wording.capability_sentence(key=view.key, state=view.state)
+            )
+
+    if preset == "offline":
+        # Section 20: nothing is fetched, so nothing is displayed, and the
+        # sentence the app shows comes from the server.
+        print(f"    {robot_wording.OFFLINE_NOTE}")
+        return
+
+    simulated = robot_simulator.SimulatedRobot(
+        db=db, device=device, capability_states=dict(states)
+    )
+    drawn = simulated.drain(now)
+    db.commit()
+    if not drawn:
+        print("    nothing to draw yet -- add medications, appointments or messages")
+    for screen in drawn:
+        _describe_screen(screen)
+    print(f"    {robot_wording.NO_HARDWARE_NOTE}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Seed development data for Today, the health record, "
-            "medications and symptoms. Never for production."
+            "medications, symptoms, appointments, the Nura assistant and "
+            "the care network. Never for production."
         )
     )
     parser.add_argument("--list", action="store_true", help="show the known accounts")
@@ -884,14 +2360,64 @@ def main() -> None:
         "--timezone",
         default="UTC",
         help=(
-            "IANA zone for --medications demo (default: UTC). The app sends "
-            "the phone's own zone; this is only for fixtures."
+            "IANA zone for --medications and --appointments demo "
+            "(default: UTC). The app sends the phone's own zone; this is only "
+            "for fixtures."
         ),
     )
     parser.add_argument(
         "--symptoms",
         choices=["empty", "demo"],
         help="replace symptom episodes, entries and photos with fixtures",
+    )
+    parser.add_argument(
+        "--appointments",
+        choices=["empty", "demo"],
+        help="replace appointments, questions and generated reports with fixtures",
+    )
+    parser.add_argument(
+        "--assistant",
+        choices=["empty", "demo", "privacy"],
+        help="replace Nura conversations, memories and preferences with fixtures",
+    )
+    parser.add_argument(
+        "--caregivers",
+        choices=["empty", "demo", "multi"],
+        help=(
+            "replace caregivers, family messages, suggestions and emergency "
+            "contacts with fixtures"
+        ),
+    )
+    parser.add_argument(
+        "--safety",
+        choices=[
+            "empty",
+            "monitoring",
+            "possible-fall",
+            "no-response",
+            "sos",
+            "history",
+        ],
+        help=(
+            "PRD 10's developer trigger harness: replace safety sessions, "
+            "events and alerts with fixtures"
+        ),
+    )
+    parser.add_argument(
+        "--robot",
+        choices=["empty", "offline", "online", "unverified", "headless", "speaker"],
+        help=(
+            "PRD 11's robot presentation harness: replace the robot's "
+            "capabilities, preferences and queued presentations with fixtures"
+        ),
+    )
+    parser.add_argument(
+        "--daily-life",
+        choices=["empty", "demo", "busy"],
+        help=(
+            "PRD 12's daily-life fixtures: replace tasks, reminders, alarms "
+            "and routines with fixtures"
+        ),
     )
     parser.add_argument(
         "--device-token",
@@ -927,6 +2453,18 @@ def main() -> None:
             set_medications(db, user, args.medications, args.timezone)
         if args.symptoms:
             set_symptoms(db, user, args.symptoms)
+        if args.appointments:
+            set_appointments(db, user, args.appointments, args.timezone)
+        if args.assistant:
+            set_assistant(db, user, args.assistant)
+        if args.caregivers:
+            set_caregivers(db, user, args.caregivers, args.timezone)
+        if args.safety:
+            set_safety(db, user, args.safety, args.timezone)
+        if args.robot:
+            set_robot(db, user, args.robot)
+        if args.daily_life:
+            set_daily_life(db, user, args.daily_life, args.timezone)
         if args.device_token:
             rotate_device_token(db, user)
         if args.keep_online:
@@ -939,11 +2477,19 @@ def main() -> None:
             or args.health
             or args.medications
             or args.symptoms
+            or args.appointments
+            or args.assistant
+            or args.caregivers
+            or args.safety
+            or args.robot
+            or args.daily_life
             or args.device_token
         ):
             print(
                 "nothing to do -- pass --device, --checkin, --health, "
-                "--medications, --symptoms and/or --device-token."
+                "--medications, --symptoms, --appointments, --assistant, "
+                "--caregivers, --safety, --robot, --daily-life and/or "
+                "--device-token."
             )
     finally:
         db.close()

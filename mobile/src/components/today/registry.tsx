@@ -16,15 +16,20 @@ import { visibleCards } from '../../services/dashboard/cards';
 import { spacing } from '../../theme/tokens';
 import type {
   DailyCheckIn,
+  DailyLifeSummary,
   DashboardCard,
   DashboardCardKey,
+  TodayAppointments,
   TodayDevice,
   TodayMedications,
   TodaySymptoms,
   WellbeingLevel,
 } from '../../types/today';
+import { AppointmentsTodayCard } from '../../features/appointments/components/AppointmentsTodayCard';
+import { CareRequestsTodayCard } from '../../features/caregivers/components/CareRequestsTodayCard';
 import { HealthProfileCard } from '../../features/health/components/HealthProfileCard';
 import { MedicationsTodayCard } from '../../features/medications/components/MedicationsTodayCard';
+import { DailyLifeTodayCard } from '../../features/productivity/components/DailyLifeTodayCard';
 import { SymptomsTodayCard } from '../../features/symptoms/components/SymptomsTodayCard';
 import { DailyCheckInCard } from './DailyCheckInCard';
 import { NuraStatusCard } from './NuraStatusCard';
@@ -37,6 +42,10 @@ export interface DashboardCardContext {
   medications: TodayMedications | null;
   /** The symptom block. Null with no profile. */
   symptoms: TodaySymptoms | null;
+  /** The appointment block. Null with no profile. */
+  appointments: TodayAppointments | null;
+  /** The daily-life block (PRD 12, section 19). Null with no profile. */
+  dailyLife: DailyLifeSummary | null;
   /** True when the screen is showing saved information rather than live data. */
   statusUnavailable: boolean;
   checkIn: DailyCheckIn | null;
@@ -69,6 +78,11 @@ export const CARD_RENDERERS: Partial<Record<DashboardCardKey, CardRenderer>> = {
   // for a health request when the card is hidden, which it is by default
   // (PRD 4, section 47).
   health_profile: () => <HealthProfileCard />,
+  // Reads its own summary, like the health profile card, and draws nothing
+  // at all unless a caregiver has actually suggested something -- so Today
+  // stays calm until it matters (PRD 9, section 87; PRD 3, section 3). It
+  // never applies anything: the button navigates to Review.
+  care_requests: () => <CareRequestsTodayCard />,
   // Handed its data, because the Today request already carries it: the whole
   // point of PRD 5 section 53 is that medications arrive with the day rather
   // than costing a second request (PRD 3, section 16). The card draws nothing
@@ -78,6 +92,20 @@ export const CARD_RENDERERS: Partial<Record<DashboardCardKey, CardRenderer>> = {
   // anybody who has never logged a symptom -- which is most people, most of
   // the time (PRD 6, section 39).
   symptoms: (context) => <SymptomsTodayCard symptoms={context.symptoms} />,
+  // Handed its data for the same reason, and unlike the two above it always
+  // draws something: PRD 7 section 9 specifies the empty state, with a way to
+  // add an appointment.
+  appointments: (context) => (
+    <AppointmentsTodayCard appointments={context.appointments} />
+  ),
+  // Handed its data for the same reason, and it draws nothing at all for
+  // anybody who has never made a task, a reminder or a routine -- which is
+  // most people on their first day (PRD 12, section 19).
+  //
+  // The key is `routines`, reserved since PRD 3 and real since PRD 12. The
+  // card covers tasks and reminders too, which is why the server titles it
+  // "Tasks & routines".
+  routines: (context) => <DailyLifeTodayCard dailyLife={context.dailyLife} />,
 };
 
 /** Keys this build can draw. Used to filter whatever the server sends. */

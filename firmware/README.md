@@ -13,7 +13,12 @@ situation — is in [xiao_esp32s3/README.md](xiao_esp32s3/README.md).
 
 > **The robot has not been built.** The firmware compiles and its cryptography
 > matches published test vectors, but nothing in this directory has run on
-> hardware.
+> hardware. PRD 11 added the whole presentation layer — the protocol, the
+> renderers, the display and audio driver abstractions and the state machine —
+> and **no frame has been drawn on a panel, no sound has been played, and no
+> presentation has ever been acknowledged by a real device.** The physical
+> drivers report `not_verified` rather than `available`, which is the honest
+> state for code that compiles and has never been seen to work.
 
 ## Role
 

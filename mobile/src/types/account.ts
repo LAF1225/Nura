@@ -36,6 +36,27 @@ export interface AccountSettings {
   reduceMotion: boolean;
   voiceFirstPreference: boolean;
   simplifiedInterface: boolean;
+  /**
+   * Care notifications (PRD 9, section 48).
+   *
+   * Here rather than in the caregiver feature because this is where per-account
+   * notification preferences already live. None of them gates anything in the
+   * app: section 48 requires an approval request to stay visible in-app whatever
+   * these say.
+   */
+  notifyCaregiverMessages: boolean;
+  notifySuggestionRequests: boolean;
+  notifyAppointmentSuggestions: boolean;
+  notifyRoutineSuggestions: boolean;
+
+  /**
+   * When this person's day ends, as `HH:MM` (PRD 10, section 6).
+   *
+   * Null until they set one, and that is a real state rather than a missing
+   * value: section 6 says Nura does not infer a bedtime from behaviour, so
+   * "Until bedtime" is refused rather than guessed when this is null.
+   */
+  safetyBedtime: string | null;
 }
 
 export interface Profile {

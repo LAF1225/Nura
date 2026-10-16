@@ -60,6 +60,11 @@ CARD_REGISTRY: tuple[CardDefinition, ...] = (
     # nothing to draw, so the card is simply absent rather than empty
     # (PRD 5, sections 28 and 29).
     CardDefinition("medications", "Medications", available=True, default_visible=True),
+    # Real from PRD 7, and on by default. Unlike medications and symptoms this
+    # card draws something for everybody: PRD 7 section 9 gives the empty state
+    # its own wording -- "No upcoming appointments", with a way to add one --
+    # because checking the next appointment is a reason people open the app.
+    CardDefinition("appointments", "Appointments", available=True, default_visible=True),
     CardDefinition("device_status", "Nura status", available=True, default_visible=True),
     # Real, but off by default: Today should open calm rather than full
     # (PRD 3, sections 3 and 19).
@@ -78,11 +83,26 @@ CARD_REGISTRY: tuple[CardDefinition, ...] = (
     # is relevant. Once somebody has used it, it shows what is active or
     # offers a way to log one (PRD 6, section 39).
     CardDefinition("symptoms", "Symptoms", available=True, default_visible=True),
-    # Reserved for later PRDs. No renderer, no data, never shown.
+    # Real from PRD 9, and on by default -- but it draws nothing at all unless a
+    # caregiver has actually suggested something, so it stays invisible until it
+    # matters. PRD 9 section 87 asks for a pending care request to be visible on
+    # Today, and section 48 that an approval request stay visible in-app whatever
+    # the notification settings say, which is why nothing gates this card on one.
+    # It never auto-applies anything: the card is a way in to Review.
     CardDefinition(
-        "appointments", "Appointments", available=False, default_visible=False
+        "care_requests", "Care requests", available=True, default_visible=True
     ),
-    CardDefinition("routines", "Routines", available=False, default_visible=False),
+    # Real from PRD 12, and on by default -- but it draws nothing at all for
+    # anybody who has never made a task, a reminder or a routine, so it stays
+    # invisible until it is relevant. The same choice the symptoms card makes,
+    # and the reason Today opens calm (PRD 3, section 3; PRD 12, section 19).
+    #
+    # The key is ``routines``, reserved since PRD 3 for exactly this. The title
+    # is PRD 12 section 19's: the card covers tasks and reminders too, and a
+    # card called "Routines" that showed three tasks would be a small lie on
+    # the screen people see most.
+    CardDefinition("routines", "Tasks & routines", available=True, default_visible=True),
+    # Reserved for later PRDs. No renderer, no data, never shown.
     CardDefinition("hydration", "Hydration", available=False, default_visible=False),
     CardDefinition(
         "physiotherapy", "Physiotherapy", available=False, default_visible=False

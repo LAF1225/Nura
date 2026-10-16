@@ -2,9 +2,9 @@
 
 Everything the screen needs arrives together: who it is for, whether they have
 checked in, whether their Nura is connected, which medications are due, which
-symptoms are active, and which cards to place. As feature areas land, they
-join this response rather than adding a request -- the alternative is an app
-that opens with six spinners.
+symptoms are active, when the next appointment is, and which cards to place. As
+feature areas land, they join this response rather than adding a request -- the
+alternative is an app that opens with six spinners.
 """
 
 from datetime import datetime
@@ -14,16 +14,23 @@ from fastapi import APIRouter
 from app.api.deps import CurrentUser, DbSession, Now, http_error
 from app.api.v1.checkins import LocalDateQuery
 from app.models import MedicationDose
+from app.schemas.appointment import TodayAppointmentRead, TodayAppointmentsRead
 from app.schemas.medication import (
     TodayLowSupplyRead,
     TodayMedicationsRead,
     TodayNextDoseRead,
+)
+from app.schemas.productivity import (
+    ReminderCountsRead,
+    RoutineCountsRead,
+    TaskCountsRead,
 )
 from app.schemas.symptom import TodaySymptomRead, TodaySymptomsRead
 from app.schemas.today import (
     DailyCheckInRead,
     DashboardCardRead,
     TodayCheckInRead,
+    TodayDailyLifeRead,
     TodayDeviceRead,
     TodayItemRead,
     TodayProfileRead,
@@ -31,9 +38,15 @@ from app.schemas.today import (
 )
 from app.services import checkins as checkin_service
 from app.services import today as today_service
+from app.services.appointments import appointments as appointment_record_service
+from app.services.appointments import summary as appointment_service
+from app.services.appointments.wording import relative_day, when_label
 from app.services.errors import DomainError
 from app.services.medications import doses as dose_service
 from app.services.medications import summary as medication_service
+from app.services.productivity import reminders as reminder_service
+from app.services.productivity import summary as daily_life_service
+from app.services.productivity import wording as productivity_wording
 from app.services.symptoms import summary as symptom_service
 
 router = APIRouter(prefix="/today", tags=["today"])
@@ -178,6 +191,224 @@ def _symptoms_read(summary: symptom_service.SymptomSummary) -> TodaySymptomsRead
     )
 
 
+#: Where tapping an Important Today appointment row goes.
+APPOINTMENTS_ROUTE = "/appointments"
+
+#: What Important Today adds for an appointment whose preparation is not
+#: finished. An offer, not a warning: PRD 7 section 10 says outright that an
+#: appointment in this section is not an emergency.
+PREPARE_HINT = "Not prepared yet"
+
+
+def _appointment_item(
+    snapshot: appointment_service.AppointmentSnapshot, now: datetime
+) -> TodayItemRead:
+    """One appointment row (PRD 7, sections 9 and 10).
+
+    ``important`` priority is used only for an appointment *today* that has not
+    been prepared for -- the one case worth noticing more than the others. It
+    raises the row's prominence in the app; it does not make it an alert, and
+    nothing here escalates to anybody.
+    """
+    appointment = snapshot.appointment
+    zone = appointment_record_service.local_zone(appointment)
+    local_today = now.astimezone(zone).date()
+    unprepared = not snapshot.preparation_complete
+    label = when_label(appointment.scheduled_at, zone, local_today)
+    return TodayItemRead(
+        id=f"appointment:{appointment.id}",
+        type="appointment",
+        title=appointment.title,
+        subtitle=f"{label} \u00b7 {PREPARE_HINT}" if unprepared else label,
+        due_at=appointment.scheduled_at,
+        priority="important" if snapshot.is_today and unprepared else "normal",
+        action_route=f"{APPOINTMENTS_ROUTE}/{appointment.id}",
+    )
+
+
+def _appointment_items(
+    summary: appointment_service.AppointmentSummary, now: datetime
+) -> list[TodayItemRead]:
+    """Appointments today and tomorrow (PRD 7, section 10).
+
+    Only those two days. An appointment next week is something to know rather
+    than something to do today, and putting it here would make the section
+    permanent furniture that people stop reading.
+    """
+    return [_appointment_item(snapshot, now) for snapshot in summary.important]
+
+
+def _today_appointment_read(
+    snapshot: appointment_service.AppointmentSnapshot, now: datetime
+) -> TodayAppointmentRead:
+    """The next appointment, with its labels rendered in its own zone (s42)."""
+    appointment = snapshot.appointment
+    zone = appointment_record_service.local_zone(appointment)
+    local_today = now.astimezone(zone).date()
+    clinician = appointment.clinician
+    return TodayAppointmentRead(
+        appointment_id=appointment.id,
+        title=appointment.title,
+        appointment_type=appointment.appointment_type,  # type: ignore[arg-type]
+        scheduled_at=appointment.scheduled_at,
+        timezone=appointment.timezone,
+        when_label=when_label(appointment.scheduled_at, zone, local_today),
+        relative_day=relative_day(snapshot.local_date, local_today),
+        clinician_name=None if clinician is None else clinician.name,
+        clinician_specialty=None if clinician is None else clinician.specialty,
+        location_name=appointment.location_name,
+        preparation_status=appointment.preparation_status,  # type: ignore[arg-type]
+        question_count=snapshot.question_count,
+        report_count=snapshot.report_count,
+    )
+
+
+def _appointments_read(
+    summary: appointment_service.AppointmentSummary, now: datetime
+) -> TodayAppointmentsRead:
+    next_up = summary.next_appointment
+    return TodayAppointmentsRead(
+        next=None if next_up is None else _today_appointment_read(next_up, now),
+        upcoming_count=summary.upcoming_count,
+        has_appointments=summary.has_appointments,
+    )
+
+
+# --- daily life (PRD 12, sections 18 and 19) --------------------------------
+
+#: Where tapping a daily-life row goes. One hub rather than four routes: a
+#: person who taps a task wants their list, and the list is where Done lives.
+DAILY_LIFE_ROUTE = "/daily"
+ROUTINES_ROUTE = "/daily/routines"
+
+#: What Important Today says about a task. Stated, never scolded about: a task
+#: past its due time is a fact about a clock, and PRD 12 section 18 keeps all
+#: of this well below anything safety-critical.
+TASK_SUBTITLE = {True: "Past its due time", False: "Due today"}
+
+#: What it says about a reminder occurrence, by where it sits.
+REMINDER_SUBTITLE = {"due": "Now", "overdue": "Not answered yet"}
+
+
+def _task_items(
+    summary: daily_life_service.DailyLifeSummary, now: datetime
+) -> list[TodayItemRead]:
+    """Tasks due today or past their due time, important ones first.
+
+    ``important`` priority is used for a task the person *marked* important --
+    never for one Nura decided mattered. It raises the row's prominence in the
+    app; it does not make it an alert, and nothing here escalates to anybody.
+    """
+    items = []
+    for snapshot in summary.important_tasks:
+        task = snapshot.task
+        items.append(
+            TodayItemRead(
+                id=f"task:{task.id}",
+                type="task",
+                title=task.title,
+                subtitle=TASK_SUBTITLE[snapshot.overdue],
+                due_at=task.due_at,
+                priority="important" if task.priority == "important" else "normal",
+                action_route=DAILY_LIFE_ROUTE,
+            )
+        )
+    return items
+
+
+def _routine_items(
+    summary: daily_life_service.DailyLifeSummary,
+) -> list[TodayItemRead]:
+    """Today's routines that are still open, with how far through they are."""
+    items = []
+    for snapshot in summary.important_runs:
+        run = snapshot.run
+        progress = snapshot.progress
+        items.append(
+            TodayItemRead(
+                id=f"routine-run:{run.id}",
+                type="routine_run",
+                title=run.routine.title,
+                subtitle=productivity_wording.routine_run_sentence(
+                    done=progress.done,
+                    total=progress.total,
+                    next_title=(
+                        None if progress.next_step is None else progress.next_step.title
+                    ),
+                ),
+                due_at=run.scheduled_for,
+                priority="normal",
+                action_route=f"{DAILY_LIFE_ROUTE}/run/{run.id}",
+            )
+        )
+    return items
+
+
+def _reminder_items(
+    summary: daily_life_service.DailyLifeSummary,
+) -> list[TodayItemRead]:
+    """Reminder occurrences waiting for an answer."""
+    items = []
+    for snapshot in summary.important_reminders:
+        occurrence = snapshot.occurrence
+        items.append(
+            TodayItemRead(
+                id=f"reminder-occurrence:{occurrence.id}",
+                type="general_reminder",
+                title=occurrence.reminder.title,
+                subtitle=REMINDER_SUBTITLE.get(snapshot.window),
+                due_at=reminder_service.due_at(occurrence),
+                priority="normal",
+                action_route=f"{DAILY_LIFE_ROUTE}/reminders",
+            )
+        )
+    return items
+
+
+def _daily_life_items(
+    summary: daily_life_service.DailyLifeSummary, now: datetime
+) -> list[TodayItemRead]:
+    """Section 18's daily-life rows, in section 18's own relative order.
+
+    An important task, then a routine, then a reminder, then an ordinary task.
+    The split between the first and the last is done here rather than in the
+    service, because it is a question about *display* order and the service
+    returns one list of tasks sorted by when they are due.
+    """
+    tasks = _task_items(summary, now)
+    important = [item for item in tasks if item.priority == "important"]
+    ordinary = [item for item in tasks if item.priority != "important"]
+    return [*important, *_routine_items(summary), *_reminder_items(summary), *ordinary]
+
+
+def _daily_life_read(
+    summary: daily_life_service.DailyLifeSummary,
+) -> TodayDailyLifeRead:
+    return TodayDailyLifeRead(
+        tasks=TaskCountsRead(
+            due_today=summary.tasks.due_today,
+            overdue=summary.tasks.overdue,
+            open_total=summary.tasks.open_total,
+        ),
+        reminders=ReminderCountsRead(
+            due_today=summary.reminders.due_today, due_now=summary.reminders.due_now
+        ),
+        routines=RoutineCountsRead(
+            due_today=summary.routines.due_today,
+            in_progress=summary.routines.in_progress,
+            completed_today=summary.routines.completed_today,
+        ),
+        next_alarm_at=summary.next_alarm_at,
+        alarm_count=summary.alarm_count,
+        summary_label=productivity_wording.today_summary_sentence(
+            summary.tasks.due_today,
+            summary.routines.due_today,
+            summary.reminders.due_today,
+        ),
+        has_anything=summary.has_anything,
+    )
+
+
 @router.get("", response_model=TodaySummaryRead)
 def read_today(
     user: CurrentUser, db: DbSession, now: Now, local_date: LocalDateQuery = None
@@ -231,16 +462,44 @@ def read_today(
             else _medications_read(summary.medications, now)
         ),
         symptoms=(None if summary.symptoms is None else _symptoms_read(summary.symptoms)),
-        # Medications first, then symptoms: a dose still waiting to be
-        # recorded is something to do now, while a symptom recorded as
-        # worsening is something to know. Both stay empty for the many
-        # people who use neither feature.
+        daily_life=(
+            None if summary.daily_life is None else _daily_life_read(summary.daily_life)
+        ),
+        appointments=(
+            None
+            if summary.appointments is None
+            else _appointments_read(summary.appointments, now)
+        ),
+        # Medications, then appointments, then symptoms, then daily life --
+        # ordered by how soon each needs something. A dose is due at a time
+        # today; an appointment is somewhere to be today or tomorrow; a symptom
+        # recorded as worsening is something to know; a task is something to
+        # do. Every group stays empty for the many people who use none of
+        # these features.
+        #
+        # **Daily life is last, and that is PRD 12 section 18's rule rather
+        # than a preference.** The section ends with "daily-life items must
+        # never obscure safety-critical items", so the order is fixed here, in
+        # one list, where it can be read -- and nothing in the daily-life
+        # summary can change where its rows land. Symptoms stay above it for
+        # the same reason: a symptom somebody recorded as getting worse is
+        # health information, and a shopping list is not.
         important=[
             *(
                 []
                 if summary.medications is None
                 else _medication_items(summary.medications, now)
             ),
+            *(
+                []
+                if summary.appointments is None
+                else _appointment_items(summary.appointments, now)
+            ),
             *([] if summary.symptoms is None else _symptom_items(summary.symptoms)),
+            *(
+                []
+                if summary.daily_life is None
+                else _daily_life_items(summary.daily_life, now)
+            ),
         ],
     )

@@ -262,8 +262,17 @@ def test_dashboard_defaults_show_the_calm_layout(client, make_token, clock):
     # Real, but off until the user asks for it (PRD 3, sections 3 and 19).
     assert by_key["quick_actions"]["visible"] is False
     # Reserved keys are listed but never available, so no client renders them.
-    # Medications left this group in PRD 5; appointments have not.
-    assert by_key["appointments"]["available"] is False
+    # Medications left this group in PRD 5, symptoms in PRD 6, appointments in
+    # PRD 7 and routines in PRD 12 -- which is why the card that key names is
+    # now called "Tasks & routines" and draws nothing until somebody has made
+    # one (PRD 12, section 19).
+    assert by_key["appointments"]["available"] is True
+    assert by_key["routines"]["available"] is True
+    assert by_key["routines"]["title"] == "Tasks & routines"
+    # Hydration and physiotherapy are still reserved, so the mechanism that
+    # kept routines out until PRD 12 is still being exercised.
+    assert by_key["hydration"]["available"] is False
+    assert by_key["physiotherapy"]["available"] is False
 
 
 def test_dashboard_preferences_persist_and_reorder(client, make_token, clock):
@@ -299,10 +308,16 @@ def test_dashboard_preferences_persist_and_reorder(client, make_token, clock):
 
 
 def test_a_card_whose_feature_does_not_exist_cannot_be_enabled(client, make_token, clock):
+    """``hydration`` has a reserved key and no renderer anywhere.
+
+    This used to use ``routines``, which PRD 12 made real. The mechanism is
+    what matters: a key may be reserved before the feature exists, and until it
+    does the server refuses to store a row saying somebody enabled it.
+    """
     headers = ready_account(client, make_token)
     response = client.put(
         "/api/v1/dashboard-preferences",
-        json={"cards": [{"card_key": "appointments", "visible": True}]},
+        json={"cards": [{"card_key": "hydration", "visible": True}]},
         headers=headers,
     )
     assert response.status_code == 422
@@ -349,9 +364,10 @@ def test_today_works_with_no_device_and_no_checkin(client, make_token, clock):
     assert body["daily_checkin"]["checkin"] is None
     assert body["daily_checkin"]["recent_completed_count"] == 0
     assert body["important"] == []
-    assert [card["key"] for card in body["cards"]][:3] == [
+    assert [card["key"] for card in body["cards"]][:4] == [
         "daily_checkin",
         "medications",
+        "appointments",
         "device_status",
     ]
 

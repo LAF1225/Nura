@@ -7,6 +7,9 @@ all under the ``/api/v1`` prefix.
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    appointments,
+    assistant,
+    caregivers,
     checkins,
     dashboard,
     device_actions,
@@ -16,7 +19,10 @@ from app.api.v1 import (
     me,
     medications,
     onboarding,
+    privacy,
+    productivity,
     profiles,
+    safety,
     symptoms,
     today,
 )
@@ -46,4 +52,10 @@ router.include_router(health.router)
 router.include_router(health_records.router)
 router.include_router(medications.router)
 router.include_router(symptoms.router)
+router.include_router(appointments.router)
+router.include_router(assistant.router)
+router.include_router(caregivers.router)
+router.include_router(safety.router)
+router.include_router(productivity.router)
+router.include_router(privacy.router)
 router.include_router(device_actions.router)

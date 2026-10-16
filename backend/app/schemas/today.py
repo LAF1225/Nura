@@ -14,7 +14,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.models.checkin import NOTE_MAX_LENGTH
 from app.models.dashboard import CARD_KEY_MAX_LENGTH
 from app.models.enums import WELLBEING_LEVELS
+from app.schemas.appointment import TodayAppointmentsRead
 from app.schemas.medication import TodayMedicationsRead
+from app.schemas.productivity import (
+    ReminderCountsRead,
+    RoutineCountsRead,
+    TaskCountsRead,
+)
 from app.schemas.symptom import TodaySymptomsRead
 
 WellbeingLevel = Literal["good", "okay", "not_great"]
@@ -175,6 +181,26 @@ class TodayCheckInRead(BaseModel):
     recent_window_days: int
 
 
+class TodayDailyLifeRead(BaseModel):
+    """Tasks, reminders, routines and alarms on Today (PRD 12, sections 19, 58).
+
+    Counts and one sentence. The rows themselves arrive through ``important``,
+    in the order PRD 12 section 18 sets -- which is why there are no lists
+    here for a client to re-sort.
+    """
+
+    tasks: TaskCountsRead
+    reminders: ReminderCountsRead
+    routines: RoutineCountsRead
+    next_alarm_at: datetime | None
+    alarm_count: int
+    #: "3 tasks, 1 routine and 2 reminders today."
+    summary_label: str
+    #: False for anybody who has never made one of these, and the card is then
+    #: not drawn at all (PRD 12, section 19).
+    has_anything: bool
+
+
 class TodayItemRead(BaseModel):
     """An Important Today item.
 
@@ -211,4 +237,13 @@ class TodaySummaryRead(BaseModel):
     #: has never logged a symptom, and the card is then not drawn at all
     #: (PRD 6, section 39).
     symptoms: TodaySymptomsRead | None
+    #: The next appointment and two counts (PRD 7, section 9). Null only for an
+    #: account with no profile yet. Unlike the two above, an empty one does not
+    #: hide the card -- PRD 7 section 9 gives "No upcoming appointments" its own
+    #: wording.
+    appointments: TodayAppointmentsRead | None
+    #: Null only for an account with no profile yet. ``has_anything`` is False
+    #: for anybody who has never made a task, a reminder or a routine
+    #: (PRD 12, section 19).
+    daily_life: TodayDailyLifeRead | None
     important: list[TodayItemRead]

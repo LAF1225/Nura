@@ -43,6 +43,14 @@ function parseSettings(raw: unknown, endpoint: string): AccountSettings {
     reduceMotion: bool(body.reduce_motion),
     voiceFirstPreference: bool(body.voice_first_preference),
     simplifiedInterface: bool(body.simplified_interface),
+    notifyCaregiverMessages: bool(body.notify_caregiver_messages),
+    notifySuggestionRequests: bool(body.notify_suggestion_requests),
+    notifyAppointmentSuggestions: bool(body.notify_appointment_suggestions),
+    notifyRoutineSuggestions: bool(body.notify_routine_suggestions),
+    safetyBedtime:
+      typeof body.safety_bedtime === 'string' && body.safety_bedtime.length > 0
+        ? body.safety_bedtime
+        : null,
   };
 }
 
@@ -112,6 +120,11 @@ export interface SettingsPatch {
   reduceMotion?: boolean;
   voiceFirstPreference?: boolean;
   simplifiedInterface?: boolean;
+  notifyCaregiverMessages?: boolean;
+  notifySuggestionRequests?: boolean;
+  notifyAppointmentSuggestions?: boolean;
+  notifyRoutineSuggestions?: boolean;
+  safetyBedtime?: string;
 }
 
 export async function updateSettings(patch: SettingsPatch): Promise<Account> {
@@ -124,6 +137,19 @@ export async function updateSettings(patch: SettingsPatch): Promise<Account> {
   if (patch.voiceFirstPreference !== undefined) {
     body.voice_first_preference = patch.voiceFirstPreference;
   }
+  if (patch.notifyCaregiverMessages !== undefined) {
+    body.notify_caregiver_messages = patch.notifyCaregiverMessages;
+  }
+  if (patch.notifySuggestionRequests !== undefined) {
+    body.notify_suggestion_requests = patch.notifySuggestionRequests;
+  }
+  if (patch.notifyAppointmentSuggestions !== undefined) {
+    body.notify_appointment_suggestions = patch.notifyAppointmentSuggestions;
+  }
+  if (patch.notifyRoutineSuggestions !== undefined) {
+    body.notify_routine_suggestions = patch.notifyRoutineSuggestions;
+  }
+  if (patch.safetyBedtime !== undefined) body.safety_bedtime = patch.safetyBedtime;
   if (patch.simplifiedInterface !== undefined) {
     body.simplified_interface = patch.simplifiedInterface;
   }

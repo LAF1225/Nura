@@ -542,20 +542,31 @@ be (section 58).
 
 ---
 
-## What PRD 7 will need
+## What PRD 7 took from this
 
-PRD 6 section 80 lists what Prepare for Appointment wants, and all of it is
-already structured and readable:
+PRD 6 section 80 listed what Prepare for Appointment would want. It is all
+structured and readable, and PRD 7 now reads it:
 
-| PRD 7 needs | Where it is |
-| --- | --- |
-| active symptoms | `GET /symptoms?active=true` |
-| recent entries | `GET /symptoms/{id}/entries`, newest first |
-| severity change | two entries' `severity`, or `safety.reasons` |
-| worsening state | `safety.worsening` and the latest `change_state` |
-| onset | the episode's three precision columns plus its wording |
-| notes | `free_text_note` per entry |
-| photo metadata | `photos` on each entry, without a storage key |
+| PRD 7 needed | Where it is | What the report does with it |
+| --- | --- | --- |
+| active symptoms | `SYMPTOM_ACTIVE_STATUSES` | an ongoing symptom appears even with nothing in the period |
+| recent entries | entries filtered by `recorded_at` | "Logged 6 times during this period." |
+| severity change | the entries' `severity` values | "Severity ranged from 3/10 to 6/10." |
+| worsening state | the latest `change_state` | "The latest entry was marked worsening." |
+| onset | the three precision columns plus the wording | "First noticed: 2015." -- never an invented date |
+| notes | `free_text_note` per entry | quoted verbatim, and only if the user ticks it |
+| uncertainty and denial | `uncertain_items`, `negated_items` | carried through as what they are (PRD 7, section 47) |
+| photo metadata | `photos` on each entry | **counted, never included** (PRD 7, section 28) |
+
+Two boundaries this file set are what made that safe. Because an episode is a
+bout, "how many times has this come back?" is answerable without merging
+unrelated events. And because uncertainty is preserved rather than flattened, a
+report can say somebody was unsure without a separate mechanism for hedging.
+
+**Photos stay here.** PRD 7 section 28 permits deferring them and they are
+deferred: the per-byte authorization described above is the whole point of how
+they are stored, and embedding one in a shareable PDF would remove it. The
+selection screen reports that they exist so nobody thinks they were lost.
 
 ---
 
@@ -597,5 +608,8 @@ mobile/app/symptoms/                           overview, log, talk, review,
   the record a symptom is deliberately kept apart from.
 - [The medication system](medication-system.md) — the other feature area that
   joins Today, and the source of several patterns reused here.
+- [The appointment and report system](appointment-and-report-system.md) — where
+  these records end up when somebody prepares for a visit, and which copies this
+  file's private-storage pattern for report PDFs.
 - [ADR 0009](../decisions/0009-symptom-tracking.md) — the decisions behind this
   design.

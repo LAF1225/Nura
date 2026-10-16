@@ -33,4 +33,32 @@ void showOffline();
 //: True when this build drives a real screen.
 bool isFitted();
 
+// --- primitives for the presentation layer (PRD 11, section 89) -------------
+//
+// PRD 11's DisplayDriver is the abstraction product logic talks to; these are
+// the three shapes it needs drawn, and they live here because this file owns
+// the panel. Nothing above this line changed, and PRD 2's pairing screens
+// still go through showPairingCode() and friends.
+//
+// All of them are no-ops in a build with no panel, which is every build so
+// far.
+
+//: Two rounded eyes, from the geometry face_renderer.cpp worked out.
+//: Named drawEyes rather than drawFace so it does not read as an overload
+//: of PRD 2's own calm-face helper, which is a different thing.
+void drawEyes(uint16_t eyeWidth, uint16_t eyeHeight, uint16_t cornerRadius,
+              uint16_t gap, int16_t offsetY, bool dimmed);
+
+//: A heading and up to five short lines. ``highContrast`` drops the accent
+//: colour, which is what a serious or emergency card asks for
+//: (PRD 11, section 106).
+void drawLines(const String& title, const String* lines, uint8_t count,
+               bool highContrast);
+
+//: Blanks the panel without turning the backlight off.
+void blank();
+
+//: 0-100. Mapped onto the backlight's own range (PRD 11, section 45).
+void setBrightness(uint8_t percent);
+
 }  // namespace nura::display

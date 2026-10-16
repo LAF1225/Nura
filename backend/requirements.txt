@@ -18,3 +18,21 @@ python-multipart==0.0.32
 # this `zoneinfo` cannot resolve `Europe/London` -- and every medication
 # reminder time depends on resolving a zone (PRD 5, section 12).
 tzdata==2026.4
+
+# PDF generation for the doctor summary (PRD 7, sections 29 and 63).
+# Pure Python -- no system libraries to install, which matters for a project
+# developed on Windows and deployed on Linux -- and byte-deterministic once the
+# creation date is pinned, which is what lets a stored report re-render to the
+# file that was already sent.
+fpdf2==2.8.8
+
+# The model provider behind the Nura assistant (PRD 8, sections 10 and 76).
+# Imported only by `services/assistant/anthropic_provider.py`, and only when
+# AI_PROVIDER=anthropic -- a deployment with no assistant configured runs, and
+# its tests pass, without ever loading it.
+#
+# **Unverified.** No request has reached Anthropic from this repository: there
+# is no API key in the development environment and the test suite runs against
+# a scripted provider. The adapter type-checks against this version and its
+# request and reply shapes are tested offline; the round trip is not.
+anthropic==1.8.0

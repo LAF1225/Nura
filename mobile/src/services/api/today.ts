@@ -6,6 +6,8 @@
  * screen rendering `undefined` (the same approach as `devices.ts`).
  */
 import { parseTodayMedications } from '../../features/medications/api';
+import { parseTodayAppointments } from '../../features/appointments/api';
+import { parseDailyLifeSummary } from '../../features/productivity/api';
 import { parseTodaySymptoms } from '../../features/symptoms/api';
 import type { ConnectionStatus } from '../../types/device';
 import type {
@@ -180,6 +182,8 @@ export function parseTodaySummary(raw: unknown): TodaySummary {
     // (PRD 5, section 53).
     medications: parseTodayMedications(body.medications),
     symptoms: parseTodaySymptoms(body.symptoms),
+    appointments: parseTodayAppointments(body.appointments),
+    dailyLife: parseDailyLifeSummary(body.daily_life),
     important: parseImportant(body.important),
   };
 }

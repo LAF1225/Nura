@@ -393,7 +393,7 @@ Full request and response shapes are in [the API reference](../api/README.md).
 | App    | `POST /api/v1/devices/provisioning-sessions`         | Short-lived, single-use token for one `hardware_id`. |
 | App    | `GET /api/v1/devices/provisioning-sessions/{id}`     | Has the robot claimed yet? Used when BLE drops mid-setup. |
 | Robot  | `POST /api/v1/devices/claim`                         | Exchange provisioning token + bootstrap secret for a device token. |
-| Robot  | `POST /api/v1/devices/heartbeat`                     | "I'm online"; returns the next interval and any pending introduction. |
+| Robot  | `POST /api/v1/devices/heartbeat`                     | "I'm online"; returns the next interval, any pending introduction, and whether there is a presentation to fetch (PRD 11). |
 | App    | `GET /api/v1/devices`, `GET /api/v1/devices/{id}`    | The account's robots.                      |
 | App    | `PATCH /api/v1/devices/{id}`                         | Rename.                                    |
 | App    | `GET /api/v1/devices/{id}/status`                    | Online / offline / unknown, from heartbeats. |
@@ -479,6 +479,18 @@ backend, because the robot may well be joining Wi-Fi.
 ## 10. Not in protocol version 1
 
 QR-code bootstrap, spoken pairing codes, ownership transfer, a real-time
-command channel (ADR 0003 still leaves WebSockets vs MQTT open — the
-heartbeat's `introduce` flag is the only server-to-robot signal), and
+command channel (ADR 0003 still leaves WebSockets vs MQTT open), and
 manufacturing-time device credentials.
+
+PRD 11 extended the heartbeat rather than adding a transport, which its
+section 58 asks for: the response now also carries `presentation_pending`, and
+the robot fetches the envelope with its own request. The flag and not the
+payload — a heartbeat is retried and logged, and a medication name travelling
+in one would eventually sit in a retry log. The full contract is
+[the presentation protocol](presentation-protocol.md).
+
+PRD 11's pairing code is still **this** protocol's. Its section 35 forbids a
+second pairing mechanism, so the `setup_code` presentation type and the
+`PAIRING_CODE` layout exist for the firmware's own dispatch and nothing in the
+backend ever queues one: the code is generated on the robot and drawn by the
+robot, over BLE, before any device record exists.

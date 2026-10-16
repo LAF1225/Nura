@@ -64,6 +64,52 @@ int post(const String& url, const String& body, const String& bearerToken, Strin
     return status;
 }
 
+//: One GET, for the presentation fetch. Separate from ``post`` rather than a
+//: flag on it: the two have different bodies, different failure meanings and
+//: different logging, and one function with a verb argument would have made
+//: the 204 case harder to read.
+int get(const String& url, const String& bearerToken, String& responseOut) {
+    if (!isAcceptableUrl(url)) {
+        NURA_ERROR("CLOUD", "refusing to use an insecure backend address");
+        return -1;
+    }
+
+    HTTPClient http;
+    http.setTimeout(protocol::HTTP_TIMEOUT_MS);
+    http.setConnectTimeout(protocol::HTTP_TIMEOUT_MS);
+
+    bool started = false;
+    WiFiClientSecure secureClient;
+    WiFiClient plainClient;
+    if (isHttps(url)) {
+#ifdef NURA_BACKEND_ROOT_CA
+        secureClient.setCACert(NURA_BACKEND_ROOT_CA);
+        started = http.begin(secureClient, url);
+#else
+        NURA_ERROR("CLOUD",
+                   "https needs a root certificate; build with NURA_BACKEND_ROOT_CA");
+        return -1;
+#endif
+    } else {
+        started = http.begin(plainClient, url);
+    }
+    if (!started) {
+        NURA_ERROR("CLOUD", "could not start the request");
+        return -1;
+    }
+
+    if (bearerToken.length() > 0) {
+        http.addHeader("Authorization", "Bearer " + bearerToken);
+    }
+
+    const int status = http.GET();
+    if (status > 0 && status != 204) {
+        responseOut = http.getString();
+    }
+    http.end();
+    return status;
+}
+
 protocol::ProvisioningError claimErrorFor(int status, const String& code) {
     if (code == "already_claimed") return protocol::ProvisioningError::ALREADY_CLAIMED;
     if (code == "identity_mismatch") return protocol::ProvisioningError::IDENTITY_MISMATCH;
@@ -181,7 +227,82 @@ HeartbeatResult heartbeat(const String& baseUrl, const String& deviceToken,
     result.ok = true;
     result.heartbeatIntervalSeconds = document["heartbeat_interval_seconds"] | 30;
     result.introduce = document["introduce"] | false;
+    // PRD 11, section 58. Absent on a backend older than PRD 11, which
+    // defaults to false and means the robot simply never fetches.
+    result.presentationPending = document["presentation_pending"] | false;
     return result;
+}
+
+// --- PRD 11: capabilities, presentations and acknowledgements ---------------
+
+bool reportCapabilities(const String& baseUrl, const String& deviceToken,
+                        const CapabilityReport& report, const char* source) {
+    JsonDocument request;
+    JsonObject capabilities = request["capabilities"].to<JsonObject>();
+    for (uint8_t index = 0; index < report.count; index += 1) {
+        capabilities[report.keys[index]] = report.states[index];
+    }
+    request["source"] = source;
+    request["firmware_version"] = NURA_FIRMWARE_VERSION;
+    String body;
+    serializeJson(request, body);
+
+    String response;
+    const int status =
+        post(baseUrl + presentation::PATH_CAPABILITIES, body, deviceToken, response);
+    if (status != 200) {
+        NURA_ERROR("PRES", "capability report refused (status %d)", status);
+        return false;
+    }
+    NURA_INFO("PRES", "reported %u capabilities",
+              static_cast<unsigned>(report.count));
+    return true;
+}
+
+PresentationResult fetchPresentation(const String& baseUrl, const String& deviceToken) {
+    PresentationResult result;
+    String response;
+    const int status = get(baseUrl + presentation::PATH_NEXT, deviceToken, response);
+
+    if (status == 204) {
+        // Nothing to show. Not a failure, and the common case.
+        result.ok = true;
+        result.empty = true;
+        return result;
+    }
+    if (status != 200) {
+        NURA_ERROR("PRES", "could not collect a presentation (status %d)", status);
+        return result;
+    }
+    result.ok = true;
+    result.body = response;
+    return result;
+}
+
+bool acknowledgePresentation(const String& baseUrl, const String& deviceToken,
+                             const String& presentationId, presentation::Ack ack,
+                             const char* failureCode) {
+    JsonDocument request;
+    request["state"] = presentation::ackName(ack);
+    if (failureCode != nullptr) {
+        request["failure_code"] = failureCode;
+    }
+    String body;
+    serializeJson(request, body);
+
+    const String url = baseUrl + presentation::PATH_ACK_PREFIX + presentationId +
+                       presentation::PATH_ACK_SUFFIX;
+    String response;
+    const int status = post(url, body, deviceToken, response);
+    if (status != 200) {
+        NURA_ERROR("PRES", "acknowledgement refused (status %d)", status);
+        return false;
+    }
+    // The state is logged; the presentation id is not. An id is not sensitive,
+    // but a log line pairing one with a type is the beginning of a history of
+    // somebody's reminders (section 67).
+    NURA_DEBUG("PRES", "acknowledged as %s", presentation::ackName(ack));
+    return true;
 }
 
 }  // namespace nura::backend

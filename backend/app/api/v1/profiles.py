@@ -10,7 +10,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import CurrentUser, DbSession, OwnedProfile
 from app.models import AccountProfileRole, Profile, User
 from app.schemas.profile import ProfileCreate, ProfileRead, ProfileUpdate, profile_to_read
 
@@ -52,14 +52,28 @@ def create_profile(
 
 
 @router.get("/{profile_id}", response_model=ProfileRead)
-def read_profile(profile_id: uuid.UUID, user: CurrentUser) -> ProfileRead:
-    link = _link_for(user, profile_id)
-    return profile_to_read(link.profile, link.role)
+def read_profile(
+    profile_id: uuid.UUID, profile: OwnedProfile, user: CurrentUser
+) -> ProfileRead:
+    """This profile, if it is one the caller's account is linked to.
+
+    ``OwnedProfile`` does the authorizing, even though ``_link_for`` below
+    would reach the same answer from the same table. Two implementations of one
+    rule is what PRD 13 section 13 is about: the shared dependency is the one
+    the security suite can *see*, so a route using it is covered by the
+    cross-boundary walk automatically. ``_link_for`` stays for the role, which
+    is a property of the link rather than of the profile.
+    """
+    return profile_to_read(profile, _link_for(user, profile_id).role)
 
 
 @router.patch("/{profile_id}", response_model=ProfileRead)
 def update_profile(
-    profile_id: uuid.UUID, payload: ProfileUpdate, user: CurrentUser, db: DbSession
+    profile_id: uuid.UUID,
+    payload: ProfileUpdate,
+    profile: OwnedProfile,
+    user: CurrentUser,
+    db: DbSession,
 ) -> ProfileRead:
     link = _link_for(user, profile_id)
 

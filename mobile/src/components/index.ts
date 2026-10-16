@@ -3,6 +3,11 @@ export { AsyncState, type AsyncStatus } from './AsyncState';
 export { Button, type ButtonVariant } from './Button';
 export { Card } from './Card';
 export { Checkbox, SelectableCard, ToggleRow } from './Choice';
+export {
+  DEGRADED_MESSAGES,
+  DegradedModeBanner,
+  type DegradedKind,
+} from './DegradedModeBanner';
 export { ConnectionChip, connectionLabel, connectionSentence } from './DeviceStatus';
 export { FlowErrorCard } from './FlowErrorCard';
 export { ListGroup, ListRow } from './List';

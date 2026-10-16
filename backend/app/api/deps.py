@@ -32,6 +32,7 @@ from app.core.security import (
 )
 from app.db.session import get_db
 from app.models import Device, Profile, User, UserSettings
+from app.services.caregivers.permissions import CareScope, resolve_scope
 from app.services.devices import hash_secret
 from app.services.errors import DomainError
 from app.services.profiles import resolve_profile
@@ -228,3 +229,46 @@ def get_owned_profile(profile_id: uuid.UUID, user: CurrentUser) -> Profile:
 
 
 OwnedProfile = Annotated[Profile, Depends(get_owned_profile)]
+
+
+def get_care_scope(profile_id: uuid.UUID, user: CurrentUser, db: DbSession) -> CareScope:
+    """How this account may see this profile: as its owner, or as a caregiver.
+
+    The second authorization path, added by PRD 9, and deliberately separate
+    from ``get_owned_profile``. That one walks ``account_profile_roles`` and is
+    what every route written in PRD 0-8 depends on, so a caregiver is still
+    refused by all of them -- the whole health record, every symptom photo,
+    every doctor report, the assistant's conversations. This one additionally
+    accepts an *active* caregiver relationship, and carries the categories it
+    was granted (PRD 9, sections 9 and 61).
+
+    Having a scope is not permission to see anything in particular: a route
+    still calls ``scope.require("medications")``, and a category that was never
+    granted answers 404, the same as a profile that is not this caller's.
+    """
+    try:
+        return resolve_scope(db, user, profile_id)
+    except DomainError as error:
+        raise http_error(error) from error
+
+
+CareScopeDep = Annotated[CareScope, Depends(get_care_scope)]
+
+
+def get_caregiver_scope(scope: CareScopeDep) -> CareScope:
+    """A scope that must be a caregiver's, not the owner's.
+
+    For the routes that only make sense from the caregiver side: the caregiver
+    home, and proposing a change. The owner has their own, richer endpoints for
+    all of it, and refusing here keeps "whose suggestion is this?" a question
+    with exactly one answer.
+    """
+    if scope.is_owner or scope.relationship is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "not_found", "message": "Not found."},
+        )
+    return scope
+
+
+CaregiverScope = Annotated[CareScope, Depends(get_caregiver_scope)]

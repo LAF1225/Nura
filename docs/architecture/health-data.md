@@ -65,13 +65,29 @@ One rule, enforced in one place — the `OwnedProfile` dependency in
 This is the same rule as profiles and devices, deliberately: one convention,
 applied everywhere, is easier to keep right than three.
 
-### Room for caregivers later
+### Caregivers (arrived in PRD 9, and not through this door)
 
-Authorization is expressed as "this account reaches this profile", not as
-"this account owns this data". When caregiver permissions arrive, they become
-another way for an account to reach a profile — with a category filter on top
-— rather than a rewrite of every endpoint. Nothing in PRD 4 assumes the
-account-profile link is exclusive.
+PRD 4 predicted that caregiver permissions would become "another way for an
+account to reach a profile, with a category filter on top". That turned out to
+be half right, and the half it got wrong is the important one.
+
+Caregiver access is **not** another `account_profile_roles` row. That table is
+what every route in this document authorizes through, so a caregiver row in it
+would have granted the complete health record on the day PRD 9 shipped. Instead
+there is a second relationship table, a second dependency, and **separate,
+narrower routes**: a caregiver cannot reach a single endpoint described here, at
+any depth, even with every category granted.
+
+What a caregiver is shown of the health record is assembled in
+`services/caregivers/care_view.py` and is deliberately less than this: counts
+rather than names for the record itself, medication names and reminder times
+without free-text skip reasons, symptom severities without free text or photos.
+See [`caregiver-and-family.md`](caregiver-and-family.md).
+
+`RECORD_SOURCES` still contains `caregiver`, and still nothing writes it: a
+caregiver cannot create a health record in PRD 9 either. The one change they can
+propose is to a medication *reminder* or an appointment, and the primary user's
+own account applies it.
 
 ## The tables
 
@@ -192,10 +208,16 @@ first of these has now happened:
 - **PRD 6 (symptoms)** gets its own model. Symptom logs must not be kept as
   medical notes — a note is something a person wrote, and a symptom log is a
   measurement over time.
-- **PRD 7 (doctor reports)** needs active conditions, active medications,
-  allergies, procedures, clinicians and important notes. All six are
-  structured and filterable today; `status`, `is_active` and the note
-  `category` are what make that possible.
+- **PRD 7 (doctor reports)** needed active conditions, active medications,
+  allergies, procedures, clinicians and notes, and all six were structured and
+  filterable already -- `status`, `is_active` and the note `category` are what
+  made that possible. It reads them and never writes them: see below.
+- **PRD 8 (the Nura assistant)** reads it and writes none of it, and needed no
+  change here at all. What it added is a boundary in the other direction:
+  assistant memory is a list of preferences, never a copy of a record, and
+  there is no foreign key from any assistant table into these ones -- which is
+  what makes "deleting a conversation deletes a conversation" checkable by
+  looking at the schema (PRD 8, sections 40, 45 and 61).
 - **Caregivers** attach to the account-profile link, as described above.
 
 ---
@@ -221,3 +243,49 @@ a percentage that rose because somebody felt unwell would be grotesque.
 Symptom photos are the one piece of health data that is not a database row. They
 are described in [the symptom system](symptom-system.md), which is also where the
 privacy chain for them is written down.
+
+---
+
+## A report reads the record; the assistant reads it too
+
+PRD 7 builds a one-page summary from what is here, and PRD 8 lets Nura answer
+questions about it. Five things about that are worth stating on this page
+rather than only in
+[the appointment and report system](appointment-and-report-system.md) and
+[the Nura assistant](nura-assistant.md):
+
+**Nothing in the report pipeline writes a health record.** Preparing for an
+appointment is a read, and it may be repeated as often as the user moves the
+period. Generating a report writes one row in `appointment_reports` and touches
+nothing else.
+
+**Deleting a report leaves every record intact.** A report is a copy of what was
+recorded; removing the copy has never meant removing the original, and a test
+asserts the counts are unchanged afterwards (PRD 7, section 65).
+
+**The record is quoted, not summarised away.** An uncertain condition is
+reported as uncertain; a symptom somebody hedged appears as hedged; a note is
+quoted in their own words. The precision this page keeps -- a year rather than an
+invented 1 January, "unknown" as a real blood-type answer -- survives into the
+report for the same reason it is kept here.
+
+**The assistant reads it through tools, and can change none of it.** Of the ten
+tools in `services/assistant/tools.py`, nine read and the tenth *proposes*
+adding a question to an appointment for the user to confirm. There is no tool
+that edits a dose, stops a medication, changes a diagnosis or deletes a record
+-- section 15's list is absent by construction rather than by rule. And no tool
+takes a profile id, so a model has nowhere to name somebody else (PRD 8,
+sections 14, 15 and 90).
+
+**Almost none of it reaches a prompt.** What Nura is told before it asks for
+anything is a date and three counts -- how many active medications, open
+symptoms and upcoming appointments exist. No name, no condition, no note, no
+clinician. Somebody who asks Nura about the weather has not had their
+prescriptions sent to a model, and a test plants four records and checks none
+of their names appears (PRD 8, section 12).
+
+**A clinician link is a real foreign key, and only within the profile.**
+`appointments.clinician_id` points at this profile's own `clinicians` row and is
+refused otherwise, so an appointment can never read another account's contact
+details back out. It is `ON DELETE SET NULL`: removing a doctor from the list must
+not delete the appointments that mention them.

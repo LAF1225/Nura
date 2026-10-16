@@ -428,3 +428,15 @@ by a test.
 | `mobile/src/features/medications/notifications.ts` | Reminder planning and the OS scheduler |
 | `mobile/src/features/medications/pendingActions.ts` | The offline queue |
 | `mobile/app/medications/` | The screens |
+
+---
+
+## Related
+
+- [The health record](health-data.md) — where a medication *record* lives, as
+  opposed to the schedule that makes it act.
+- [The symptom system](symptom-system.md) — the other feature area that joins
+  Today, and which reuses several patterns from here.
+- [The appointment and report system](appointment-and-report-system.md) — where
+  the adherence figure defined here is quoted to a clinician, as counts and never
+  as a grade.

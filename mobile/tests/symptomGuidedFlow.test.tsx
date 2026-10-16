@@ -26,6 +26,7 @@ import {
 } from 'expo-router/testing-library';
 
 import { useSymptomDraftStore } from '../src/features/symptoms/draftStore';
+import { localDateString } from '../src/utils/date';
 import { mockBackend, signInAt } from './helpers';
 
 jest.mock('../src/services/auth/supabaseClient', () =>
@@ -148,9 +149,10 @@ it('captures a volunteered description, asks nothing again, and saves what was r
   expect(entry.site).toBe('left knee');
   expect(entry.character).toBe('sharp');
   expect(entry.severity).toBe(6);
-  expect(entry.onset_date).toBe(
-    new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
-  );
+  // Yesterday on the *device's* calendar, which is what the conversation
+  // resolved "yesterday" against. `toISOString` would convert to UTC first and
+  // disagree with it for the hours when the two dates differ.
+  expect(entry.onset_date).toBe(localDateString(new Date(Date.now() - 86_400_000)));
   // The idempotency key was generated before the request, not by it.
   expect(String(entry.client_entry_id)).toMatch(/^entry-/);
 

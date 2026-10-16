@@ -152,4 +152,72 @@ void showOffline() {
     NURA_INFO("UI", "offline");
 }
 
+// --- primitives for the presentation layer (PRD 11, section 89) -------------
+
+void drawEyes(uint16_t eyeWidth, uint16_t eyeHeight, uint16_t cornerRadius,
+              uint16_t gap, int16_t offsetY, bool dimmed) {
+#if NURA_HAS_DISPLAY
+    if (!g_ready) return;
+    g_panel.fillScreen(board::COLOUR_BACKGROUND);
+    const int centreX = board::TFT_WIDTH / 2;
+    const int top = board::TFT_HEIGHT / 2 - eyeHeight / 2 + offsetY;
+    const int left = centreX - gap / 2 - eyeWidth;
+    const uint16_t colour = dimmed ? board::COLOUR_TEXT : board::COLOUR_ACCENT;
+    g_panel.fillSmoothRoundRect(left, top, eyeWidth, eyeHeight, cornerRadius, colour);
+    g_panel.fillSmoothRoundRect(centreX + gap / 2, top, eyeWidth, eyeHeight,
+                                cornerRadius, colour);
+#else
+    (void)eyeWidth;
+    (void)eyeHeight;
+    (void)cornerRadius;
+    (void)gap;
+    (void)offsetY;
+    (void)dimmed;
+#endif
+}
+
+void drawLines(const String& title, const String* lines, uint8_t count,
+               bool highContrast) {
+#if NURA_HAS_DISPLAY
+    if (!g_ready) return;
+    g_panel.fillScreen(board::COLOUR_BACKGROUND);
+    g_panel.setTextDatum(textdatum_t::middle_center);
+    // Section 106: a serious or emergency card is plain white on dark, with
+    // no accent colour competing with the words.
+    g_panel.setTextColor(highContrast ? board::COLOUR_TEXT : board::COLOUR_ACCENT,
+                         board::COLOUR_BACKGROUND);
+    g_panel.setTextSize(2);
+    const int lineHeight = 28;
+    const int blockHeight = lineHeight * (count + 1);
+    int y = board::TFT_HEIGHT / 2 - blockHeight / 2;
+    g_panel.drawString(title, board::TFT_WIDTH / 2, y);
+    g_panel.setTextColor(board::COLOUR_TEXT, board::COLOUR_BACKGROUND);
+    for (uint8_t index = 0; index < count; index += 1) {
+        y += lineHeight;
+        g_panel.drawString(lines[index], board::TFT_WIDTH / 2, y);
+    }
+#else
+    (void)title;
+    (void)lines;
+    (void)count;
+    (void)highContrast;
+#endif
+}
+
+void blank() {
+#if NURA_HAS_DISPLAY
+    if (g_ready) g_panel.fillScreen(board::COLOUR_BACKGROUND);
+#endif
+}
+
+void setBrightness(uint8_t percent) {
+#if NURA_HAS_DISPLAY
+    if (!g_ready) return;
+    if (percent > 100) percent = 100;
+    g_panel.setBrightness(static_cast<uint8_t>(percent * 255 / 100));
+#else
+    (void)percent;
+#endif
+}
+
 }  // namespace nura::display

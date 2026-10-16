@@ -33,6 +33,7 @@ from app.core.config import get_settings
 from app.core.security import SUPABASE_AUDIENCE, SupabaseJwksVerifier
 from app.db.session import get_db
 from app.main import app
+from app.services.assistant.provider import ScriptedProvider, set_provider
 from app.services.storage import get_object_store
 
 TEST_DATABASE_NAME = "nura_test"
@@ -76,7 +77,23 @@ def engine() -> Iterator[sa.Engine]:
     with test_engine.begin() as connection:
         connection.execute(
             sa.text(
-                "TRUNCATE symptom_photos, symptom_entries, symptom_episodes, "
+                "TRUNCATE data_exports, "
+                "routine_step_completions, routine_runs, routine_steps, "
+                "routines, general_reminder_occurrences, general_reminders, "
+                "alarms, tasks, "
+                "device_presentations, device_presentation_preferences, "
+                "device_capabilities, "
+                "safety_audit_events, safety_escalation_attempts, "
+                "safety_alerts, safety_events, safety_monitoring_sessions, "
+                "caregiver_audit_events, caregiver_suggestions, "
+                "family_messages, family_threads, caregiver_permissions, "
+                "caregiver_relationships, emergency_contacts, "
+                "conversation_messages, conversations, "
+                "assistant_memories, assistant_preferences, "
+                "assistant_prompt_dismissals, "
+                "appointment_reports, appointment_questions, "
+                "appointments, "
+                "symptom_photos, symptom_entries, symptom_episodes, "
                 "medication_doses, medication_schedule_times, "
                 "medication_schedules, medication_supply, "
                 "medical_conditions, medications, allergies, "
@@ -207,14 +224,33 @@ def auth_headers(make_token) -> dict[str, str]:
     return {"Authorization": f"Bearer {make_token()}"}
 
 
+@pytest.fixture
+def scripted() -> Iterator[ScriptedProvider]:
+    """Installs a provider that replays canned replies (PRD 8, section 101).
+
+    Not autouse. A test that has not asked for this gets the default
+    ``unconfigured`` provider, so nothing can reach a real model by accident
+    -- and the "assistant is not set up" path gets exercised for free by
+    every test that never requests this fixture.
+    """
+    settings = get_settings()
+    provider = ScriptedProvider()
+    original = settings.ai_provider, settings.ai_model
+    settings.ai_provider, settings.ai_model = "scripted", "scripted-model"
+    set_provider(provider)
+    yield provider
+    set_provider(None)
+    settings.ai_provider, settings.ai_model = original
+
+
 @pytest.fixture(autouse=True)
 def media_root(tmp_path, monkeypatch) -> Iterator[Path]:
     """Points private media at a throwaway directory, for every test.
 
-    Autouse on purpose: a symptom-photo test that wrote into the real
-    ``backend/.private-media`` would leave images on the developer's disk, and
-    somebody else's test run would then find them. Pointing the setting at
-    ``tmp_path`` means the bytes go away with the test.
+    Autouse on purpose: a symptom photo or a generated report PDF written into
+    the real ``backend/.private-media`` would leave files on the developer's
+    disk, and somebody else's test run would then find them. Pointing the
+    setting at ``tmp_path`` means the bytes go away with the test.
 
     ``get_object_store`` caches the store it built, so the cache is cleared on
     both sides of the yield.

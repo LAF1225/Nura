@@ -101,6 +101,15 @@ it('summarises medications and keeps everything else honest about not existing',
   // way to edit what the medication is. That lives in Health (PRD 5, s30).
   expect(screen.queryByText(/Add a medication/)).toBeNull();
 
-  // And the parts of Care that do not exist say so (PRD 3, section 35).
-  expect(screen.getByText('No caregivers are set up yet.')).toBeTruthy();
+  // Caregivers exist from PRD 9, so Care names them for real now -- with the
+  // empty state rather than the "coming later" line this used to assert.
+  expect(screen.getByText('Caregivers and family')).toBeTruthy();
+  expect(screen.getByText('Nobody is helping with your care yet.')).toBeTruthy();
+
+  // Routines were the one thing still named-but-absent through PRD 11. PRD 12
+  // built them, so Care names them for real -- with the empty state rather
+  // than the "coming later" line this used to assert (PRD 12, section 20).
+  expect(screen.getByText('Routines')).toBeTruthy();
+  expect(screen.getByText('No routines yet.')).toBeTruthy();
+  expect(screen.getByText('Set up a routine')).toBeTruthy();
 });

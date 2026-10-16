@@ -24,7 +24,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { createLogger } from '../../utils/logger';
-import { isApiError, type ApiErrorKind } from '../../services/api/errors';
+import { isRetryable } from '../reliability/retry';
 import { submitDoseAction } from './api';
 import type { DoseActionInput, DoseActionResult, PendingDoseAction } from './types';
 
@@ -37,19 +37,6 @@ const STORAGE_KEY = 'nura.medications.pendingActions';
  * would fail the same way forever, so holding onto it would be a queue that
  * retries and never drains.
  */
-const RETRYABLE: readonly ApiErrorKind[] = [
-  'offline',
-  'unavailable',
-  'timeout',
-  'server',
-  'unauthorized', // the user can sign in again; their action should survive it
-  'configuration',
-  'unknown',
-];
-
-function isRetryable(error: unknown): boolean {
-  return isApiError(error) && RETRYABLE.includes(error.kind);
-}
 
 function isPendingAction(value: unknown): value is PendingDoseAction {
   if (value === null || typeof value !== 'object') return false;

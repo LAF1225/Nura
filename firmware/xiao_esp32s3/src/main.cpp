@@ -8,6 +8,11 @@
 //
 // The connectivity state machine below is deliberately explicit rather than a
 // set of booleans (PRD 2, section 26).
+//
+// PRD 11 adds a second state machine, in presentation_manager.*, and keeps it
+// separate on purpose (section 88): what the robot is *showing* and whether it
+// is *online* are different questions, and a single machine covering both is
+// how a robot ends up stuck on a card because Wi-Fi dropped.
 #include <Arduino.h>
 
 #include "audio.h"
@@ -17,6 +22,7 @@
 #include "device_identity.h"
 #include "display.h"
 #include "log.h"
+#include "presentation_manager.h"
 #include "protocol.h"
 #include "secure_channel.h"
 #include "settings_store.h"
@@ -93,6 +99,11 @@ void sendHeartbeat() {
     g_heartbeatIntervalMs = result.heartbeatIntervalSeconds * 1000;
     if (result.introduce && !g_introductionPending) {
         g_introductionPending = true;
+    }
+    if (result.presentationPending) {
+        // PRD 11, section 58: the heartbeat says there is something to show
+        // and the device fetches it. The flag carries no payload.
+        nura::presentation_manager::notifyPending();
     }
 }
 
@@ -264,10 +275,12 @@ void maintainWifi() {
     g_nextReconnectAt = now + 30000;
 
     NURA_INFO("WIFI", "reconnecting to the stored network");
-    nura::display::showOffline();
+    nura::presentation_manager::showOffline();
     if (nura::wifi::connect(nura::settings::wifi()) == nura::wifi::Outcome::CONNECTED) {
         setState(Connectivity::ONLINE);
-        nura::display::showConnected();
+        // The companion face, drawn locally, until the first fetch answers
+        // (PRD 11, section 83).
+        nura::presentation_manager::showIdleFace();
         g_nextHeartbeatAt = now;
     }
 }
@@ -291,6 +304,7 @@ void setup() {
     nura::settings::begin();
     nura::display::begin();
     nura::audio::begin();
+    nura::presentation_manager::begin();
     nura::wifi::begin();
     nura::ble::begin(&g_delegate);
     publishFlags();
@@ -310,8 +324,11 @@ void setup() {
         g_nextHeartbeatAt = millis();
     } else {
         // Not bricked: hold the button to re-provision (PRD 2, section 44).
+        // PRD 11, sections 34 and 98: the robot says so itself, locally,
+        // rather than waiting to be told what to show by a backend it cannot
+        // reach.
         setState(Connectivity::ERROR);
-        nura::display::showOffline();
+        nura::presentation_manager::showOffline();
     }
 }
 
@@ -327,6 +344,12 @@ void loop() {
     }
 
     playIntroductionIfAsked();
+
+    // PRD 11: at most one unit of presentation work per loop, so BLE and the
+    // button are never starved by a render.
+    if (g_state == Connectivity::ONLINE && nura::wifi::isConnected()) {
+        nura::presentation_manager::loop();
+    }
 
     if (g_closePairingAt != 0 && now > g_closePairingAt) {
         g_closePairingAt = 0;

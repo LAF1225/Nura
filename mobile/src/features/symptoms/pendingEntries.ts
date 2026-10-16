@@ -30,7 +30,7 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { isApiError, type ApiErrorKind } from '../../services/api/errors';
+import { isRetryable } from '../reliability/retry';
 import { createLogger } from '../../utils/logger';
 import { createEntry, createEpisode, recordRecurrence, uploadPhoto } from './api';
 import type { PendingSymptomEntry } from './types';
@@ -40,26 +40,14 @@ const log = createLogger('symptoms');
 const STORAGE_KEY = 'nura.symptoms.pendingEntries';
 
 /**
- * Failures worth keeping the record for. Everything else means the request would
- * fail the same way forever, so holding on would be a queue that retries and
- * never drains.
+ * Which failures are worth sending again -- the shared policy (PRD 13, s30).
  *
- * `unauthorized` is retryable on purpose: the user can sign in again, and their
- * description of a symptom should survive that.
+ * This file held its own copy of the list until PRD 13, as four other queues
+ * did, all five identical. The policy and the reasoning behind each kind now
+ * live in `features/reliability/retry.ts`; it is re-exported here because
+ * other modules already import the name from this one.
  */
-const RETRYABLE: readonly ApiErrorKind[] = [
-  'offline',
-  'unavailable',
-  'timeout',
-  'server',
-  'unauthorized',
-  'configuration',
-  'unknown',
-];
-
-function isRetryable(error: unknown): boolean {
-  return isApiError(error) && RETRYABLE.includes(error.kind);
-}
+export { isRetryable };
 
 function isPending(value: unknown): value is PendingSymptomEntry {
   if (value === null || typeof value !== 'object') return false;

@@ -135,3 +135,12 @@ class HeartbeatRead(BaseModel):
     #: Play the first introduction now (PRD 2, section 38).
     introduce: bool
     server_time: datetime
+    #: There is something for the robot to show, so fetch it
+    #: (PRD 11, section 58).
+    #:
+    #: A flag rather than the presentation itself, and the reason is section
+    #: 67: a heartbeat is a request a robot makes every thirty seconds and
+    #: retries when it fails, and a medication name travelling in one would
+    #: eventually sit in a retry log. The robot pays one extra request for a
+    #: heartbeat that never carries anything private.
+    presentation_pending: bool = False

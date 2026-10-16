@@ -11,10 +11,12 @@
  *    send yet (PRD 3, section 27).
  */
 import type { ConnectionStatus } from './device';
+import type { TodayAppointments } from '../features/appointments/types';
 import type { TodayMedications } from '../features/medications/types';
+import type { DailyLifeSummary } from '../features/productivity/types';
 import type { TodaySymptoms } from '../features/symptoms/types';
 
-export type { TodayMedications, TodaySymptoms };
+export type { DailyLifeSummary, TodayAppointments, TodayMedications, TodaySymptoms };
 
 export type WellbeingLevel = 'good' | 'okay' | 'not_great';
 
@@ -85,6 +87,7 @@ export type DashboardCardKey =
   | 'medications'
   | 'appointments'
   | 'symptoms'
+  | 'care_requests'
   | 'routines'
   | 'hydration'
   | 'physiotherapy';
@@ -119,6 +122,20 @@ export interface TodaySummary {
    * the card is then not drawn at all.
    */
   symptoms: TodaySymptoms | null;
+  /**
+   * The next appointment and two counts (PRD 7, section 9). Null only for an
+   * account with no profile yet. Unlike the two above, an empty one does *not*
+   * hide the card: PRD 7 section 9 gives "No upcoming appointments" its own
+   * wording, because checking when the next visit is, or noting one down, is a
+   * reason people open the app.
+   */
+  appointments: TodayAppointments | null;
+  /**
+   * Tasks, reminders, routines and alarms (PRD 12, sections 18 and 19). Null
+   * only for an account with no profile yet; `hasAnything` is false for
+   * anybody who has never made one, and the card is then not drawn at all.
+   */
+  dailyLife: DailyLifeSummary | null;
   important: TodayItem[];
 }
 

@@ -19,7 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { DailyCheckIn, WellbeingLevel } from '../../types/today';
 import { createLogger } from '../../utils/logger';
-import { isApiError, type ApiErrorKind } from '../api/errors';
+import { isRetryable } from '../../features/reliability/retry';
 import { submitDailyCheckIn, type CheckInSaved } from '../api/today';
 
 const log = createLogger('checkins');
@@ -36,23 +36,14 @@ export interface PendingCheckIn {
 }
 
 /**
- * Failures worth keeping the entry for. Everything else means the request will
- * never succeed as written, so holding onto it would be a queue that retries
- * forever.
+ * Which failures are worth sending again -- the shared policy (PRD 13, s30).
+ *
+ * This file held its own copy of the list until PRD 13, as four other queues
+ * did, all five identical. The policy and the reasoning behind each kind now
+ * live in `features/reliability/retry.ts`; it is re-exported here because
+ * other modules already import the name from this one.
  */
-const RETRYABLE: readonly ApiErrorKind[] = [
-  'offline',
-  'unavailable',
-  'timeout',
-  'server',
-  'unauthorized', // the user can sign in again; the answer should survive that
-  'configuration',
-  'unknown',
-];
-
-function isRetryable(error: unknown): boolean {
-  return isApiError(error) && RETRYABLE.includes(error.kind);
-}
+export { isRetryable };
 
 function isPendingCheckIn(value: unknown): value is PendingCheckIn {
   if (value === null || typeof value !== 'object') return false;
